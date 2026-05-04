@@ -246,10 +246,29 @@ with st.sidebar:
 
     st.markdown("---")
     st.markdown("### 📊 Dataset")
-    dataset_name = st.selectbox(
-        "Dataset",
-        ["Classification (2 classes)", "Iris (2 features)", "Moons", "Circles", "Blobs"]
+
+    data_source = st.radio(
+        "Data Source",
+        ["📦 Built-in", "📂 Upload CSV"],
+        horizontal=True
     )
+
+    uploaded_file = None
+    user_feature_cols = None
+    user_label_col = None
+
+    if data_source == "📂 Upload CSV":
+        uploaded_file = st.file_uploader(
+            "Upload your CSV file",
+            type=["csv"],
+            help="Must have numeric feature columns and one binary label column (0/1)"
+        )
+        dataset_name = "Upload"
+    else:
+        dataset_name = st.selectbox(
+            "Dataset",
+            ["Classification (2 classes)", "Iris (2 features)", "Moons", "Circles", "Blobs"]
+        )
 
     test_size = st.slider("Test Size", 0.1, 0.5, 0.2, 0.05)
     random_state = st.number_input("Random State", 0, 100, 42)
@@ -285,7 +304,78 @@ def style_ax(ax, fig=None):
         spine.set_edgecolor('#1e3a5f')
     ax.grid(True, alpha=0.12, color='#4fc3f7')
 
-X, y = get_dataset(dataset_name, random_state)
+# ─── Load Data ───────────────────────────────────────────────────────────────
+use_uploaded = False
+upload_error = None
+
+if data_source == "📂 Upload CSV" and uploaded_file is not None:
+    try:
+        df_upload = pd.read_csv(uploaded_file)
+        numeric_cols = df_upload.select_dtypes(include=np.number).columns.tolist()
+
+        if len(numeric_cols) < 2:
+            upload_error = "CSV must have at least 2 numeric columns."
+        else:
+            # Let user pick columns in main area (after sidebar closes)
+            st.session_state["df_upload"] = df_upload
+            st.session_state["numeric_cols"] = numeric_cols
+            use_uploaded = True
+    except Exception as e:
+        upload_error = f"Could not read CSV: {e}"
+
+if upload_error:
+    st.error(upload_error)
+
+# ── Column picker (shown in main area when CSV is uploaded) ──
+if use_uploaded:
+    df_upload = st.session_state["df_upload"]
+    numeric_cols = st.session_state["numeric_cols"]
+
+    st.markdown("""
+    <div class="concept-card" style="margin-bottom:1.2rem;">
+    <h3>📂 CSV Loaded — Configure Columns</h3>
+    </div>
+    """, unsafe_allow_html=True)
+
+    col_a, col_b, col_c = st.columns(3)
+    with col_a:
+        feat1 = st.selectbox("Feature 1 (X axis)", numeric_cols, index=0)
+    with col_b:
+        feat2 = st.selectbox("Feature 2 (Y axis)", numeric_cols,
+                              index=1 if len(numeric_cols) > 1 else 0)
+    with col_c:
+        label_col = st.selectbox("Label column (binary 0/1)", numeric_cols,
+                                  index=len(numeric_cols)-1)
+
+    st.markdown("---")
+
+    try:
+        X_raw = df_upload[[feat1, feat2]].values
+        y_raw = df_upload[label_col].values
+        unique_labels = np.unique(y_raw)
+        if len(unique_labels) != 2:
+            st.error(f"Label column must have exactly 2 unique values. Found: {unique_labels}")
+            use_uploaded = False
+        else:
+            # Remap labels to 0/1 if needed
+            label_map = {unique_labels[0]: 0, unique_labels[1]: 1}
+            y_raw = np.array([label_map[v] for v in y_raw])
+            X = X_raw
+            y = y_raw
+            st.success(f"✅ Dataset loaded: **{len(X)}** samples | "
+                       f"Class 0: **{sum(y==0)}** | Class 1: **{sum(y==1)}**")
+
+            with st.expander("👀 Preview data (first 10 rows)"):
+                st.dataframe(df_upload[[feat1, feat2, label_col]].head(10),
+                             use_container_width=True)
+    except Exception as e:
+        st.error(f"Column error: {e}")
+        use_uploaded = False
+
+if not use_uploaded:
+    X, y = get_dataset(dataset_name, random_state)
+    feat1, feat2 = "Feature 1", "Feature 2"
+
 scaler = StandardScaler()
 X_scaled = scaler.fit_transform(X)
 X_train, X_test, y_train, y_test = train_test_split(
@@ -490,8 +580,8 @@ with tab2:
                      color='#4fc3f7', fontsize=13, fontweight='bold', pad=15)
         ax.legend(loc='upper right', fontsize=9, facecolor='#0d1b2a',
                   labelcolor='#ccd6f6', edgecolor='#1e3a5f')
-        ax.set_xlabel("Feature 1 (normalized)", color='#8892b0')
-        ax.set_ylabel("Feature 2 (normalized)", color='#8892b0')
+        ax.set_xlabel(f"{feat1} (normalized)", color='#8892b0')
+        ax.set_ylabel(f"{feat2} (normalized)", color='#8892b0')
 
         st.pyplot(fig)
         plt.close()
