@@ -1281,44 +1281,71 @@ elif algo == "🔁 AutoEncoder":
             st.pyplot(fig); plt.close()
             st.info("💡 Increase Latent Dim to 2+ to see a 2D scatter plot of the latent space.")
 
-# ══════════════════════════════════════════════════════════════
-# ██  VAE — Variational AutoEncoder
-# ══════════════════════════════════════════════════════════════
 elif algo == "🎲 VAE (Variational)":
-    st.markdown('<div class="main-header"><h1>🎲 Variational AutoEncoder (VAE)</h1><p>Learn a smooth, structured latent space — and generate brand-new data</p></div>', unsafe_allow_html=True)
+    st.markdown('<div class="main-header"><h1>🎲 Variational AutoEncoder (VAE)</h1><p>Learn a structured latent space — compress, generate, and detect anomalies</p></div>', unsafe_allow_html=True)
 
+    # ═══════════════════════════════════════════════════════════
+    # SIDEBAR — all controls here
+    # ═══════════════════════════════════════════════════════════
     with st.sidebar:
-        st.markdown("### VAE Settings")
+        st.markdown("### ⚙️ VAE Settings")
 
-        st.markdown('<div style="color:#8892b0;font-size:0.75rem;margin-bottom:4px;">🗜️ <b>Latent Dimension</b> — size of the learned distribution.<br>2D is perfect for visualization. Higher = more expressive but harder to visualize.</div>', unsafe_allow_html=True)
+        st.markdown("""<div style="color:#8892b0;font-size:0.75rem;margin-bottom:3px;">
+        🗜️ <b>Latent Dimension</b><br>
+        The bottleneck size. <b>2 is ideal</b> — you can visualize it as a 2D map.
+        Smaller = more compression but harder to reconstruct.
+        Larger = easier reconstruction but latent space gets crowded.</div>""", unsafe_allow_html=True)
         vae_latent = st.slider("Latent Dimension", 1, 8, 2, 1, key="vae_lat")
 
-        st.markdown('<div style="color:#8892b0;font-size:0.75rem;margin:6px 0 4px;">🧱 <b>Hidden Size</b> — neurons in encoder/decoder hidden layers.<br>Larger = model can learn richer patterns, but risks overfitting small datasets.</div>', unsafe_allow_html=True)
+        st.markdown("""<div style="color:#8892b0;font-size:0.75rem;margin:8px 0 3px;">
+        🧱 <b>Hidden Layer Size</b><br>
+        Neurons in the encoder/decoder middle layers.
+        More neurons = more capacity. Start with 32–64.
+        Too large for small datasets → overfitting.</div>""", unsafe_allow_html=True)
         vae_hidden = st.slider("Hidden Size", 8, 128, 32, 8, key="vae_hid")
 
-        st.markdown('<div style="color:#8892b0;font-size:0.75rem;margin:6px 0 4px;">⚖️ <b>Beta (KL weight)</b> — balances reconstruction vs. regularity.<br>β=1 is standard VAE. Higher β = smoother/more disentangled latent space, but worse reconstruction. Lower β = sharper outputs but messier latent space.</div>', unsafe_allow_html=True)
-        vae_beta   = st.slider("Beta (KL weight) β", 0.0, 5.0, 1.0, 0.1, key="vae_beta")
+        st.markdown("""<div style="color:#8892b0;font-size:0.75rem;margin:8px 0 3px;">
+        ⚖️ <b>Beta (β) — KL Weight</b><br>
+        Balances two competing goals:<br>
+        • <b>Low β</b>: sharp reconstructions, messy latent space<br>
+        • <b>β = 1</b>: standard VAE — good balance<br>
+        • <b>High β</b>: organized latent space, blurrier outputs<br>
+        For anomaly detection, β=0.5–1 works best.</div>""", unsafe_allow_html=True)
+        vae_beta = st.slider("Beta β", 0.0, 5.0, 1.0, 0.1, key="vae_beta")
 
-        st.markdown('<div style="color:#8892b0;font-size:0.75rem;margin:6px 0 4px;">🔄 <b>Epochs</b> — training passes through all data.<br>Watch the loss curve — stop when it flattens. More data needs more epochs.</div>', unsafe_allow_html=True)
-        vae_epochs = st.slider("Epochs", 50, 600, 250, 50, key="vae_ep")
+        st.markdown("""<div style="color:#8892b0;font-size:0.75rem;margin:8px 0 3px;">
+        🔄 <b>Epochs</b><br>
+        Training passes. Stop when the loss curve flattens.
+        200–300 is usually enough for these datasets.</div>""", unsafe_allow_html=True)
+        vae_epochs = st.slider("Epochs", 50, 500, 200, 50, key="vae_ep")
 
-        st.markdown('<div style="color:#8892b0;font-size:0.75rem;margin:6px 0 4px;">⚡ <b>Learning Rate</b> — gradient step size.<br>0.001–0.01 works best for VAEs. Too high → NaN loss. Too low → very slow convergence.</div>', unsafe_allow_html=True)
-        vae_lr     = st.select_slider("Learning Rate", [0.0001,0.001,0.005,0.01,0.05], value=0.005, key="vae_lr")
+        st.markdown("""<div style="color:#8892b0;font-size:0.75rem;margin:8px 0 3px;">
+        ⚡ <b>Learning Rate</b><br>
+        Step size per gradient update.<br>
+        • Too high (0.05+): loss explodes or oscillates<br>
+        • Too low (0.0001): very slow, may not converge<br>
+        • <b>0.005 is a safe default</b> for VAEs</div>""", unsafe_allow_html=True)
+        vae_lr = st.select_slider("Learning Rate", [0.0001,0.001,0.005,0.01,0.05], value=0.005, key="vae_lr")
 
         st.markdown("---")
-        st.markdown("### Data")
-        vae_ds = st.selectbox("Dataset", ["Digits (MNIST-like)", "Iris", "Blobs"], key="vae_ds")
+        st.markdown("### 📊 Data Source")
+        vae_src = st.radio("Source", ["📦 Built-in", "📂 Upload CSV"], key="vae_src")
+        if vae_src == "📦 Built-in":
+            vae_ds = st.selectbox("Dataset", ["Digits (MNIST-like)", "Iris", "Blobs"], key="vae_ds")
+        else:
+            vae_ds = "upload"
 
-    # ── Data ──────────────────────────────────────────────────
+    # ═══════════════════════════════════════════════════════════
+    # DATA LOADING
+    # ═══════════════════════════════════════════════════════════
     @st.cache_data
-    def get_vae_data(name):
+    def get_vae_builtin(name):
         if name == "Digits (MNIST-like)":
             d = datasets.load_digits()
-            X = d.data.astype(np.float32) / 16.0
-            y = d.target
+            X, y = d.data.astype(np.float32), d.target
         elif name == "Iris":
             d = datasets.load_iris()
-            X = d.data.astype(np.float32); y = d.target
+            X, y = d.data.astype(np.float32), d.target
         else:
             X, y = datasets.make_blobs(300, n_features=4, centers=3, random_state=42)
             X = X.astype(np.float32)
@@ -1326,400 +1353,646 @@ elif algo == "🎲 VAE (Variational)":
         X = sc.fit_transform(X).astype(np.float32)
         return X, y
 
-    # ── Pure-numpy VAE ────────────────────────────────────────
+    is_digits = False
+    if vae_src == "📂 Upload CSV":
+        st.markdown("### 📂 Upload Your CSV")
+        st.markdown("""<div class="upload-hint">
+        Upload any CSV with numeric columns. Pick 2+ feature columns and optionally a label column.<br>
+        <b>For anomaly detection:</b> your label column should mark which rows are "normal" (0) and which are "anomaly" (1),
+        OR pick a class column and choose which class = anomaly below.
+        </div>""", unsafe_allow_html=True)
+
+        up = st.file_uploader("Drop CSV here", type=["csv"], key="vae_csv")
+        if up is None:
+            st.info("⬆️ Upload a CSV to continue, or switch to Built-in in the sidebar.")
+            st.stop()
+        try:
+            df_up = pd.read_csv(up)
+        except Exception as e:
+            st.error(f"Could not read file: {e}"); st.stop()
+
+        num_cols = df_up.select_dtypes(include=np.number).columns.tolist()
+        all_cols  = df_up.columns.tolist()
+        if len(num_cols) < 2:
+            st.error("Need at least 2 numeric feature columns."); st.stop()
+
+        st.markdown("#### Map your columns")
+        pc1,pc2,pc3 = st.columns(3)
+        with pc1:
+            feat_cols = st.multiselect("Feature columns (pick 2+)", num_cols,
+                                        default=num_cols[:min(4,len(num_cols))], key="vae_feats")
+        with pc2:
+            has_label = st.checkbox("Has label column?", value=True, key="vae_haslbl")
+            label_col = st.selectbox("Label column", all_cols, index=len(all_cols)-1, key="vae_lbl") if has_label else None
+        with pc3:
+            st.markdown("<br>", unsafe_allow_html=True)
+            st.info(f"📊 {len(df_up)} rows · {len(feat_cols)} features selected")
+
+        if len(feat_cols) < 2:
+            st.error("Select at least 2 feature columns."); st.stop()
+
+        valid = df_up[feat_cols + ([label_col] if label_col else [])].dropna()
+        X_vae = StandardScaler().fit_transform(valid[feat_cols].values).astype(np.float32)
+        if has_label and label_col:
+            raw_y = valid[label_col].values
+            uniq  = np.unique(raw_y)
+            lmap  = {v:i for i,v in enumerate(uniq)}
+            y_vae = np.array([lmap[v] for v in raw_y])
+        else:
+            y_vae = np.zeros(len(X_vae), dtype=int)
+
+        with st.expander("👀 Data preview"):
+            st.dataframe(valid.head(10), use_container_width=True)
+    else:
+        X_vae, y_vae = get_vae_builtin(vae_ds)
+        is_digits = (vae_ds == "Digits (MNIST-like)")
+
+    n_cls_vae = len(np.unique(y_vae))
+
+    # ═══════════════════════════════════════════════════════════
+    # NUMPY VAE — helpers
+    # ═══════════════════════════════════════════════════════════
     def relu(x):    return np.maximum(0, x)
     def relu_d(x):  return (x > 0).astype(float)
 
     @st.cache_data
-    def train_vae(X, latent_dim, hidden, beta, epochs, lr):
-        np.random.seed(42)
-        n = X.shape[1]
-        # Encoder weights → μ and log σ²
-        We1 = np.random.randn(n,      hidden)     * np.sqrt(2/n)
-        be1 = np.zeros((1, hidden))
-        Wmu = np.random.randn(hidden, latent_dim) * 0.01
-        bmu = np.zeros((1, latent_dim))
-        Wlv = np.random.randn(hidden, latent_dim) * 0.01
-        blv = np.zeros((1, latent_dim))
-        # Decoder weights
-        Wd1 = np.random.randn(latent_dim, hidden) * np.sqrt(2/latent_dim)
-        bd1 = np.zeros((1, hidden))
-        Wo  = np.random.randn(hidden, n)           * 0.01
-        bo  = np.zeros((1, n))
+    def train_vae(X, latent_dim, hidden, beta, epochs, lr, seed=42):
+        np.random.seed(seed)
+        n  = X.shape[1]
+        k  = latent_dim
+        scale_e = np.sqrt(2.0/n); scale_d = np.sqrt(2.0/k)
+        We1 = np.random.randn(n, hidden)*scale_e; be1 = np.zeros((1,hidden))
+        Wmu = np.random.randn(hidden,k)*0.01;     bmu = np.zeros((1,k))
+        Wlv = np.random.randn(hidden,k)*0.01;     blv = np.zeros((1,k))
+        Wd1 = np.random.randn(k,hidden)*scale_d;  bd1 = np.zeros((1,hidden))
+        Wo  = np.random.randn(hidden,n)*0.01;     bo  = np.zeros((1,n))
 
-        losses, recon_losses, kl_losses = [], [], []
-        batch = min(64, len(X))
+        losses, r_losses, kl_losses = [], [], []
+        bs = min(64, len(X))
 
-        for epoch in range(epochs):
+        for ep in range(epochs):
             idx = np.random.permutation(len(X))
-            ep_loss = ep_recon = ep_kl = 0
-            for i in range(0, len(X), batch):
-                Xb = X[idx[i:i+batch]]
-                B  = len(Xb)
+            ep_l = ep_r = ep_k = 0.0
+            for i in range(0, len(X), bs):
+                Xb = X[idx[i:i+bs]]; B = len(Xb)
+                # encode
+                h1  = relu(Xb@We1+be1)
+                mu  = h1@Wmu+bmu
+                lv  = np.clip(h1@Wlv+blv, -4, 4)
+                std = np.exp(0.5*lv)
+                eps = np.random.randn(B,k)
+                z   = mu + std*eps
+                # decode
+                h2  = relu(z@Wd1+bd1)
+                xr  = h2@Wo+bo
+                # loss
+                recon = np.mean((xr-Xb)**2)
+                kl    = -0.5*np.mean(1+lv-mu**2-np.exp(lv))
+                loss  = recon + beta*kl
+                ep_l+=loss; ep_r+=recon; ep_k+=kl
+                # backprop decoder
+                dxr = 2*(xr-Xb)/(B*n)
+                dWo=h2.T@dxr;     dbo=dxr.sum(0,keepdims=True)
+                dh2=dxr@Wo.T*relu_d(z@Wd1+bd1)
+                dWd1=z.T@dh2;     dbd1=dh2.sum(0,keepdims=True)
+                dz=dh2@Wd1.T
+                # backprop reparameterisation
+                dmu = dz + beta*(mu)/(B*k)
+                dlv = np.clip(dz*eps*0.5*std + beta*0.5*(np.exp(lv)-1)/(B*k), -1, 1)
+                # backprop encoder
+                dh1 = (dmu@Wmu.T + dlv@Wlv.T)*relu_d(Xb@We1+be1)
+                for W,b,dW,db in [(Wmu,bmu,np.clip(h1.T@dmu,-1,1),np.clip(dmu.sum(0,keepdims=True),-1,1)),
+                                   (Wlv,blv,np.clip(h1.T@dlv,-1,1),np.clip(dlv.sum(0,keepdims=True),-1,1)),
+                                   (We1,be1,np.clip(Xb.T@dh1,-1,1),np.clip(dh1.sum(0,keepdims=True),-1,1))]:
+                    W-=lr*dW; b-=lr*db
+                Wd1-=lr*dWd1; bd1-=lr*dbd1; Wo-=lr*dWo; bo-=lr*dbo
+            losses.append(ep_l); r_losses.append(ep_r); kl_losses.append(ep_k)
 
-                # ── Encode ──
-                h1  = relu(Xb @ We1 + be1)         # (B, hidden)
-                mu  = h1 @ Wmu + bmu               # (B, latent)
-                lv  = np.clip(h1 @ Wlv + blv, -4, 4)  # log variance
-                std = np.exp(0.5 * lv)
-                eps = np.random.randn(B, latent_dim)
-                z   = mu + std * eps               # reparameterization
+        return (We1,be1,Wmu,bmu,Wlv,blv,Wd1,bd1,Wo,bo), losses, r_losses, kl_losses
 
-                # ── Decode ──
-                h2  = relu(z @ Wd1 + bd1)
-                xr  = h2 @ Wo + bo                 # reconstruction
-
-                # ── Loss ──
-                recon = np.mean((xr - Xb)**2)
-                kl    = -0.5 * np.mean(1 + lv - mu**2 - np.exp(lv))
-                loss  = recon + beta * kl
-                ep_loss += loss; ep_recon += recon; ep_kl += kl
-
-                # ── Backprop decoder ──
-                dxr  = 2*(xr - Xb) / (B * n)
-                dWo  = h2.T @ dxr;          dbo  = dxr.sum(0, keepdims=True)
-                dh2  = dxr @ Wo.T * relu_d(z @ Wd1 + bd1)
-                dWd1 = z.T @ dh2;           dbd1 = dh2.sum(0, keepdims=True)
-                dz   = dh2 @ Wd1.T
-
-                # ── Backprop reparameterization ──
-                dmu_recon = dz.copy()
-                dlv_recon = dz * eps * 0.5 * std
-
-                # ── KL gradients ──
-                dmu_kl = beta * mu / (B * latent_dim)
-                dlv_kl = beta * 0.5 * (np.exp(lv) - 1) / (B * latent_dim)
-
-                dmu = dmu_recon + dmu_kl
-                dlv = np.clip(dlv_recon + dlv_kl, -1, 1)
-
-                # ── Backprop encoder ──
-                dh1_mu  = dmu @ Wmu.T * relu_d(Xb @ We1 + be1)
-                dh1_lv  = dlv @ Wlv.T * relu_d(Xb @ We1 + be1)
-                dh1     = dh1_mu + dh1_lv
-
-                dWmu = np.clip(h1.T @ dmu,  -1, 1); dbmu = np.clip(dmu.sum(0, keepdims=True),  -1, 1)
-                dWlv = np.clip(h1.T @ dlv,  -1, 1); dblv = np.clip(dlv.sum(0, keepdims=True),  -1, 1)
-                dWe1 = np.clip(Xb.T @ dh1,  -1, 1); dbe1 = np.clip(dh1.sum(0, keepdims=True),  -1, 1)
-
-                We1-=lr*dWe1; be1-=lr*dbe1
-                Wmu-=lr*dWmu; bmu-=lr*dbmu
-                Wlv-=lr*dWlv; blv-=lr*dblv
-                Wd1-=lr*dWd1; bd1-=lr*dbd1
-                Wo -=lr*dWo;  bo -=lr*dbo
-
-            losses.append(ep_loss)
-            recon_losses.append(ep_recon)
-            kl_losses.append(ep_kl)
-
-        return (We1,be1,Wmu,bmu,Wlv,blv,Wd1,bd1,Wo,bo), losses, recon_losses, kl_losses
-
-    def vae_encode(X, We1,be1,Wmu,bmu,Wlv,blv):
-        h1  = relu(X @ We1 + be1)
-        mu  = h1 @ Wmu + bmu
-        lv  = np.clip(h1 @ Wlv + blv, -4, 4)
+    def encode(X, w):
+        We1,be1,Wmu,bmu,Wlv,blv,Wd1,bd1,Wo,bo = w
+        h1=relu(X@We1+be1); mu=h1@Wmu+bmu; lv=np.clip(h1@Wlv+blv,-4,4)
         return mu, lv
 
-    def vae_decode(z, Wd1,bd1,Wo,bo):
-        h2  = relu(z @ Wd1 + bd1)
-        return h2 @ Wo + bo
+    def decode(z, w):
+        We1,be1,Wmu,bmu,Wlv,blv,Wd1,bd1,Wo,bo = w
+        return relu(z@Wd1+bd1)@Wo+bo
 
-    X_vae, y_vae = get_vae_data(vae_ds)
+    def recon_score(X, w):
+        mu, lv = encode(X, w)
+        xr     = decode(mu, w)
+        mse    = np.mean((xr-X)**2, axis=1)
+        kl     = -0.5*np.mean(1+lv-mu**2-np.exp(lv), axis=1)
+        return mse, kl, xr, mu
 
-    with st.spinner("Training VAE... (pure numpy, no PyTorch needed)"):
-        vae_w, losses_total, losses_recon, losses_kl = train_vae(
-            X_vae, vae_latent, vae_hidden, vae_beta, vae_epochs, vae_lr
-        )
+    # ═══════════════════════════════════════════════════════════
+    # TRAIN — full dataset for all tabs except anomaly
+    # ═══════════════════════════════════════════════════════════
+    with st.spinner("Training VAE on full dataset..."):
+        w_full, losses_t, losses_r, losses_kl = train_vae(
+            X_vae, vae_latent, vae_hidden, vae_beta, vae_epochs, vae_lr)
 
-    We1,be1,Wmu,bmu,Wlv,blv,Wd1,bd1,Wo,bo = vae_w
-    mu_all, lv_all = vae_encode(X_vae, We1,be1,Wmu,bmu,Wlv,blv)
-    recon_all = vae_decode(mu_all, Wd1,bd1,Wo,bo)
-    recon_loss_final = np.mean((recon_all - X_vae)**2)
-    kl_final         = -0.5 * np.mean(1 + lv_all - mu_all**2 - np.exp(lv_all))
+    mu_all, lv_all = encode(X_vae, w_full)
+    xr_all         = decode(mu_all, w_full)
+    mse_all,_,_,_  = recon_score(X_vae, w_full)
+    final_recon    = float(np.mean(mse_all))
+    final_kl       = float(-0.5*np.mean(1+lv_all-mu_all**2-np.exp(lv_all)))
 
-    # ── TABS ──────────────────────────────────────────────────
-    tab1, tab2, tab3, tab4 = st.tabs([
-        "📖 VAE vs AE", "📉 Training Curves", "🎲 Generate Samples", "🗺️ Latent Space"
+    # ═══════════════════════════════════════════════════════════
+    # TABS
+    # ═══════════════════════════════════════════════════════════
+    tab1,tab2,tab3,tab4,tab5 = st.tabs([
+        "📖 VAE vs AE", "📉 Training", "🎲 Generate", "🗺️ Latent Space", "🚨 Anomaly Detection"
     ])
 
-    # ── TAB 1: Concept ────────────────────────────────────────
+    # ────────────────────────────────────────────────────────────
+    # TAB 1 — Concept
+    # ────────────────────────────────────────────────────────────
     with tab1:
-        c1, c2 = st.columns([1,1])
+        c1,c2 = st.columns([1,1])
         with c1:
             st.markdown("""
 <div class="card"><h3>🤔 What's Wrong with a Regular AutoEncoder?</h3>
-<p>A regular AE learns a latent space, but it can be <strong>messy and full of holes</strong>. If you pick a random point in the latent space and decode it, you often get garbage — because the AE never learned what should live between the clusters.</p>
-<div class="highlight">💡 Regular AE: compress → reconstruct. That's it. No structure in the latent space.</div></div>
+<p>A regular AE compresses data to a point. Those points can end up scattered randomly — some regions of latent space are empty "holes". If you sample a random point from a hole and decode it, you get garbage.</p>
+<div class="highlight">💡 AE: great at compression. Terrible at generation.</div></div>
 
-<div class="card"><h3>🎲 The VAE Idea: Learn a Distribution, Not a Point</h3>
-<p>Instead of encoding each input to a single point, a VAE encodes it to a <strong>probability distribution</strong> (a Gaussian bell curve) — described by two values:</p>
-<ul>
-<li><strong>μ (mu)</strong>: the mean — "where the point should be"</li>
-<li><strong>σ (sigma)</strong>: the spread — "how uncertain we are"</li></ul>
-<p>Then we sample from that distribution. This forces the latent space to be <strong>smooth and continuous</strong> — every point in it means something!</p>
-<div class="highlight">💡 VAE: compress → distribution → sample → reconstruct. The randomness forces structure.</div></div>
+<div class="card"><h3>🎲 VAE: Encode to a Distribution, not a Point</h3>
+<p>Instead of "this input maps to point z", a VAE says "this input maps to a <b>bell curve</b> centered at μ with spread σ". Then we sample from that bell curve.</p>
+<p>This forces the latent space to be smooth and continuous — no holes. Every point in the space decodes to something meaningful.</p>
+<div class="highlight">💡 VAE = AE + probability distribution over the latent space</div></div>
 
 <div class="card"><h3>🔀 The Reparameterization Trick</h3>
-<p>Sampling is random, so how do we backpropagate through it? Simple trick: instead of sampling z directly, compute <strong>z = μ + σ × ε</strong> where ε is random noise drawn once.</p>
-<p>Now gradients can flow through μ and σ, while ε is just a fixed constant for that step.</p>
-<div class="highlight">💡 This is the key innovation that makes VAEs trainable!</div></div>
+<p>Sampling is random — you can't backpropagate through randomness. Solution: write <b>z = μ + σ × ε</b> where ε is fixed random noise. Now gradients flow through μ and σ normally.</p>
+<div class="highlight">💡 This one trick is what makes the whole VAE trainable</div></div>
 
-<div class="card"><h3>⚖️ The VAE Loss: Two Terms Fighting Each Other</h3>
-<p><strong>Total Loss = Reconstruction Loss + β × KL Divergence</strong></p>
+<div class="card"><h3>⚖️ The VAE Loss: Two Terms</h3>
+<p><b>Loss = Reconstruction + β × KL Divergence</b></p>
 <ul>
-<li><strong>Reconstruction Loss</strong>: "make your output look like your input" — same as AE</li>
-<li><strong>KL Divergence</strong>: "keep your distributions close to a standard Gaussian" — forces regularity</li>
-<li><strong>β (Beta)</strong>: how much you care about the KL term vs reconstruction</li></ul>
-<p>These two terms are in tension — reconstruction wants freedom, KL wants order. The balance creates a useful latent space.</p>
-<div class="highlight">💡 High β → very organized latent space but blurry outputs. Low β → sharp outputs but messy latent space.</div></div>
+<li><b>Reconstruction</b>: "output should look like input" — same as AE</li>
+<li><b>KL Divergence</b>: "keep distributions close to a standard Gaussian" — fills in the holes</li>
+<li><b>β</b>: how hard you push the KL term. β=1 is standard. Higher → smoother but blurrier.</li>
+</ul>
+<div class="highlight">💡 KL is what separates VAE from AE — it's the regularizer that creates the smooth latent space</div></div>
 
-<div class="card"><h3>🆚 AE vs VAE — Quick Comparison</h3>
+<div class="card"><h3>🆚 Quick Comparison</h3>
 <table style="width:100%;font-size:0.85rem;color:#a8b2d8;border-collapse:collapse;">
-<tr><th style="color:#4fc3f7;text-align:left;padding:4px;">Feature</th><th style="color:#4fc3f7;text-align:left;padding:4px;">AutoEncoder</th><th style="color:#4fc3f7;text-align:left;padding:4px;">VAE</th></tr>
-<tr><td style="padding:4px;">Latent</td><td style="padding:4px;">Fixed point</td><td style="padding:4px;">Distribution (μ, σ)</td></tr>
-<tr><td style="padding:4px;">Can Generate?</td><td style="padding:4px;">❌ No (gaps are noise)</td><td style="padding:4px;">✅ Yes (smooth space)</td></tr>
-<tr><td style="padding:4px;">Latent Space</td><td style="padding:4px;">Unstructured</td><td style="padding:4px;">Smooth & continuous</td></tr>
-<tr><td style="padding:4px;">Loss</td><td style="padding:4px;">Reconstruction only</td><td style="padding:4px;">Recon + KL</td></tr>
-<tr><td style="padding:4px;">Best for</td><td style="padding:4px;">Compression, denoising</td><td style="padding:4px;">Generation, interpolation</td></tr>
+<tr><th style="color:#4fc3f7;text-align:left;padding:4px 8px;">Feature</th>
+    <th style="color:#4fc3f7;text-align:left;padding:4px 8px;">AutoEncoder</th>
+    <th style="color:#4fc3f7;text-align:left;padding:4px 8px;">VAE</th></tr>
+<tr style="border-top:1px solid #1e3a5f;"><td style="padding:4px 8px;">Latent</td><td style="padding:4px 8px;">Single point</td><td style="padding:4px 8px;">Distribution (μ, σ)</td></tr>
+<tr style="border-top:1px solid #1e3a5f;"><td style="padding:4px 8px;">Can Generate?</td><td style="padding:4px 8px;">❌ Gaps = noise</td><td style="padding:4px 8px;">✅ Smooth space</td></tr>
+<tr style="border-top:1px solid #1e3a5f;"><td style="padding:4px 8px;">Loss</td><td style="padding:4px 8px;">Reconstruction only</td><td style="padding:4px 8px;">Recon + KL</td></tr>
+<tr style="border-top:1px solid #1e3a5f;"><td style="padding:4px 8px;">Best for</td><td style="padding:4px 8px;">Compression, denoising</td><td style="padding:4px 8px;">Generation, anomaly detection, interpolation</td></tr>
 </table></div>
 """, unsafe_allow_html=True)
 
         with c2:
-            # Architecture diagram VAE
-            fig, ax = plt.subplots(figsize=(8,5.5))
+            # Architecture diagram
+            fig,ax=plt.subplots(figsize=(8,5.5))
             fig.patch.set_facecolor('#0a0f1e'); ax.set_facecolor('#0a0f1e'); ax.axis('off')
-            n_in = X_vae.shape[1]
-            # Draw blocks instead of circles for clarity
-            sections = [
-                (0.05, 0.22, '#1e3a5f',  '#4fc3f7', f'Encoder\n({min(n_in,8)}→{vae_hidden})'),
-                (0.27, 0.44, '#0d2137',  '#ab47bc', f'μ  &  log σ²\n(dim={vae_latent})'),
-                (0.50, 0.50, '#0a0f1e',  '#00e5ff', 'Sample\nz = μ+σε'),
-                (0.56, 0.73, '#1e3a5f',  '#4fc3f7', f'Decoder\n({vae_latent}→{vae_hidden})'),
-                (0.78, 0.95, '#0d2137',  '#4fc3f7', f'Output\n(dim={min(n_in,8)})'),
+            blocks=[
+                (0.02,0.22,'#0d2b45','#4fc3f7',f'Encoder\nInput→{vae_hidden}'),
+                (0.27,0.46,'#1a0d30','#ab47bc',f'μ  and  log σ²\ndim = {vae_latent}'),
+                (0.47,0.53,'#0a0f1e','#00e5ff','ε~N(0,1)\nSample z'),
+                (0.54,0.73,'#0d2b45','#4fc3f7',f'Decoder\n{vae_latent}→{vae_hidden}'),
+                (0.78,0.98,'#0d2b45','#4fc3f7',f'Output\n(reconstructed)'),
             ]
-            for x0, x1, fc, ec, label in sections:
-                rect = plt.Rectangle((x0, 0.3), x1-x0, 0.4, fc=fc, ec=ec, lw=1.5, zorder=3)
-                ax.add_patch(rect)
-                ax.text((x0+x1)/2, 0.5, label, ha='center', va='center',
-                        color='white', fontsize=8.5, fontfamily='monospace', fontweight='bold', zorder=5)
-
-            # Arrows between sections
-            for xs, xe, col in [(0.22,0.27,'#4fc3f7'),(0.44,0.5,'#ab47bc'),
-                                  (0.5,0.56,'#00e5ff'),(0.73,0.78,'#4fc3f7')]:
-                ax.annotate('', xy=(xe, 0.5), xytext=(xs, 0.5),
-                            arrowprops=dict(arrowstyle='->', color=col, lw=2), zorder=6)
-
-            # Labels above/below
-            ax.text(0.35, 0.78, 'Bottleneck\n(Distribution)', ha='center', color='#ab47bc',
-                    fontsize=8, fontfamily='monospace')
-            ax.text(0.5, 0.16, 'ε ~ N(0,1)', ha='center', color='#00e5ff',
-                    fontsize=8.5, fontfamily='monospace')
-            ax.text(0.05, 0.82, 'Input x', ha='left', color='#8892b0', fontsize=8, fontfamily='monospace')
-            ax.text(0.82, 0.82, 'x̂ ≈ x', ha='left', color='#8892b0', fontsize=8, fontfamily='monospace')
+            for x0,x1,fc,ec,lbl in blocks:
+                ax.add_patch(plt.Rectangle((x0,0.28),x1-x0,0.44,fc=fc,ec=ec,lw=2,zorder=3,alpha=0.9))
+                ax.text((x0+x1)/2,0.5,lbl,ha='center',va='center',color='white',
+                        fontsize=8,fontfamily='monospace',fontweight='bold',zorder=5)
+            arrows=[(0.22,0.27,'#4fc3f7'),(0.46,0.47,'#ab47bc'),(0.53,0.54,'#00e5ff'),(0.73,0.78,'#4fc3f7')]
+            for xs,xe,col in arrows:
+                ax.annotate('',xy=(xe,0.5),xytext=(xs,0.5),
+                            arrowprops=dict(arrowstyle='->',color=col,lw=2.5),zorder=6)
+            ax.text(0.365,0.82,'Bottleneck\nDistribution',ha='center',color='#ab47bc',
+                    fontsize=8.5,fontfamily='monospace',fontweight='bold')
+            ax.text(0.5,0.14,'z = μ + σ · ε',ha='center',color='#00e5ff',
+                    fontsize=9,fontfamily='monospace',fontweight='bold')
+            ax.text(0.02,0.84,'x (input)',ha='left',color='#8892b0',fontsize=8,fontfamily='monospace')
+            ax.text(0.80,0.84,'x̂ ≈ x',ha='left',color='#8892b0',fontsize=8,fontfamily='monospace')
             ax.set_xlim(0,1); ax.set_ylim(0,1)
-            ax.set_title('VAE Architecture', color='#4fc3f7', fontsize=12, fontweight='bold')
+            ax.set_title('VAE Architecture',color='#4fc3f7',fontsize=13,fontweight='bold')
             st.pyplot(fig); plt.close()
 
-            # Show loss formula
-            st.markdown(f"""
-<div class="card" style="margin-top:1rem;">
-<h3>📐 Current Loss Breakdown</h3>
-<table style="width:100%;font-size:0.9rem;color:#a8b2d8;">
-<tr><td>🔵 Reconstruction Loss</td><td style="color:#4fc3f7;font-family:monospace;">{losses_recon[-1]:.4f}</td></tr>
-<tr><td>🟣 KL Divergence × β={vae_beta}</td><td style="color:#ab47bc;font-family:monospace;">{vae_beta * losses_kl[-1]:.4f}</td></tr>
-<tr><td><b>Total Loss</b></td><td style="color:#00e5ff;font-family:monospace;"><b>{losses_total[-1]:.4f}</b></td></tr>
-</table>
-</div>
-""", unsafe_allow_html=True)
+            st.markdown(f"""<div class="card">
+<h3>📊 Current Model Stats</h3>
+<table style="width:100%;font-size:0.88rem;color:#a8b2d8;">
+<tr><td>Reconstruction Loss</td><td style="color:#4fc3f7;font-family:monospace;text-align:right;">{final_recon:.5f}</td></tr>
+<tr><td>KL Divergence</td><td style="color:#ab47bc;font-family:monospace;text-align:right;">{final_kl:.5f}</td></tr>
+<tr><td>Total Loss (β={vae_beta})</td><td style="color:#00e5ff;font-family:monospace;text-align:right;"><b>{final_recon+vae_beta*final_kl:.5f}</b></td></tr>
+<tr><td>Input Dim → Latent Dim</td><td style="color:#66bb6a;font-family:monospace;text-align:right;">{X_vae.shape[1]} → {vae_latent}</td></tr>
+<tr><td>Compression Ratio</td><td style="color:#ffa726;font-family:monospace;text-align:right;">{X_vae.shape[1]/vae_latent:.1f}×</td></tr>
+</table></div>""", unsafe_allow_html=True)
 
-    # ── TAB 2: Training Curves ────────────────────────────────
+    # ────────────────────────────────────────────────────────────
+    # TAB 2 — Training curves
+    # ────────────────────────────────────────────────────────────
     with tab2:
-        m1,m2,m3,m4 = st.columns(4)
-        for col,lbl,val in zip([m1,m2,m3,m4],
-            ["📉 Final Loss","🔵 Recon Loss","🟣 KL Loss","🗜️ Latent Dim"],
-            [f"{losses_total[-1]:.4f}", f"{recon_loss_final:.4f}", f"{kl_final:.4f}", str(vae_latent)]):
-            with col: st.markdown(metric_box(val,lbl), unsafe_allow_html=True)
+        st.markdown("### 📉 Training Loss Curves")
+        st.markdown("""<div class="card">
+<h3>How to Read These Charts</h3>
+<ul>
+<li><b>Total Loss</b> should steadily drop and then flatten — if still falling at the end, increase Epochs</li>
+<li><b>Reconstruction Loss</b> going down = the decoder is getting better at rebuilding inputs</li>
+<li><b>KL Divergence</b> rising then stabilizing is <em>normal</em> — it means the latent space is being regularized.
+    If it stays at 0 the whole time ("KL collapse"), try increasing β or the hidden size.</li>
+</ul>
+</div>""", unsafe_allow_html=True)
 
-        st.markdown("<br>", unsafe_allow_html=True)
-        fig, axes = plt.subplots(1, 3, figsize=(13, 4))
-        fig.patch.set_facecolor('#0a0f1e')
+        fig,axes=plt.subplots(1,3,figsize=(13,4)); fig.patch.set_facecolor('#0a0f1e')
         for ax in axes: style_ax(ax)
-
-        axes[0].plot(losses_total,  color='#00e5ff', lw=2, label='Total')
-        axes[0].set_title("Total Loss",       color='#4fc3f7', fontsize=11, fontweight='bold')
-        axes[0].set_xlabel("Epoch", color='#8892b0')
-
-        axes[1].plot(losses_recon,  color='#4fc3f7', lw=2)
-        axes[1].set_title("Reconstruction Loss", color='#4fc3f7', fontsize=11, fontweight='bold')
-        axes[1].set_xlabel("Epoch", color='#8892b0')
-
-        axes[2].plot(losses_kl,     color='#ab47bc', lw=2)
-        axes[2].set_title("KL Divergence",    color='#4fc3f7', fontsize=11, fontweight='bold')
-        axes[2].set_xlabel("Epoch", color='#8892b0')
-
+        for ax,data,col,ttl in zip(axes,
+            [losses_t, losses_r, losses_kl],
+            ['#00e5ff','#4fc3f7','#ab47bc'],
+            ['Total Loss','Reconstruction Loss','KL Divergence']):
+            ax.plot(data,color=col,lw=2)
+            ax.set_title(ttl,color='#4fc3f7',fontsize=11,fontweight='bold')
+            ax.set_xlabel("Epoch",color='#8892b0')
         plt.tight_layout(); st.pyplot(fig); plt.close()
 
-        st.markdown("""
-<div class="card">
-<h3>📖 How to Read These Curves</h3>
-<ul>
-<li><strong>Total Loss</strong> should steadily decrease and flatten — if it's still falling sharply, train more epochs</li>
-<li><strong>Reconstruction Loss</strong> going down = the decoder is getting better at rebuilding inputs</li>
-<li><strong>KL Divergence</strong> going up slightly then stabilizing is normal — it means the latent space is being regularized</li>
-<li>If KL collapses to 0 → the model ignores the latent space (KL collapse) → try lowering β or increasing latent dim</li>
-</ul>
-</div>
-""", unsafe_allow_html=True)
-
-    # ── TAB 3: Generation ────────────────────────────────────
+    # ────────────────────────────────────────────────────────────
+    # TAB 3 — Generate
+    # ────────────────────────────────────────────────────────────
     with tab3:
-        st.markdown("### 🎲 Generate New Samples from the Latent Space")
-        st.markdown("""
-<div class="card">
-<h3>💡 How Generation Works</h3>
-<p>Because the VAE forces the latent space to follow a standard Gaussian distribution N(0,1), we can <strong>sample random points from it</strong> and decode them into realistic new data.</p>
-<p>This is impossible with a regular AE — sampling random points there gives garbage. With a VAE, the smooth latent space means every point decodes to something meaningful.</p>
-</div>
-""", unsafe_allow_html=True)
+        st.markdown("### 🎲 Generate New Samples")
+        st.markdown("""<div class="card">
+<h3>Why Can VAEs Generate Data?</h3>
+<p>The KL term forces the latent space to follow N(0,1). So we can simply <b>sample random points from N(0,1)</b> and decode them — every point in the space is "filled" with meaning.</p>
+<p>A regular AE can't do this: random points in its latent space hit empty gaps → garbled output.</p>
+<div class="highlight">💡 Try Temperature: low=conservative outputs, high=more varied but less accurate</div>
+</div>""", unsafe_allow_html=True)
 
-        n_gen = st.slider("Number of samples to generate", 4, 32, 16, 4)
-        temperature = st.slider("Temperature (sampling spread)", 0.1, 2.0, 1.0, 0.1,
-                                 help="Higher = more diverse but less accurate. Lower = conservative.")
-        st.markdown('<div style="color:#8892b0;font-size:0.78rem;">⚙️ Temperature scales the noise — higher temp samples from a wider distribution → more variety, less fidelity.</div>', unsafe_allow_html=True)
+        gc1,gc2=st.columns(2)
+        with gc1:
+            n_gen = st.slider("Samples to generate", 4, 32, 16, 4, key="vae_ngen")
+        with gc2:
+            temp  = st.slider("Temperature", 0.1, 2.0, 1.0, 0.1, key="vae_temp")
+            st.markdown('<div style="color:#8892b0;font-size:0.75rem;">Temperature scales N(0,1) — higher = more spread = more diverse but less accurate</div>',unsafe_allow_html=True)
 
-        np.random.seed(st.session_state.get("gen_seed", 0))
-        z_random = np.random.randn(n_gen, vae_latent) * temperature
-        generated = vae_decode(z_random, Wd1, bd1, Wo, bo)
+        if st.button("🎲 New random samples", key="vae_resample"):
+            st.session_state["vae_seed"] = int(np.random.randint(0,9999))
+        seed_g = st.session_state.get("vae_seed", 0)
+        np.random.seed(seed_g)
+        z_rand  = np.random.randn(n_gen, vae_latent)*temp
+        gen_out = decode(z_rand, w_full)
 
-        if vae_ds == "Digits (MNIST-like)":
-            cols_per_row = 8
-            rows = (n_gen + cols_per_row - 1) // cols_per_row
-            fig, axes = plt.subplots(rows, cols_per_row, figsize=(cols_per_row*1.5, rows*1.8))
+        if is_digits:
+            cols_r = 8
+            rows_r = (n_gen+cols_r-1)//cols_r
+            fig,axes=plt.subplots(rows_r,cols_r,figsize=(cols_r*1.6,rows_r*1.9))
             fig.patch.set_facecolor('#0a0f1e')
-            axes = np.array(axes).reshape(rows, cols_per_row)
-            for i in range(rows * cols_per_row):
-                ax = axes[i // cols_per_row, i % cols_per_row]
-                ax.set_facecolor('#0a0f1e'); ax.axis('off')
-                if i < n_gen:
-                    ax.imshow(generated[i].reshape(8,8), cmap='Blues', vmin=-2, vmax=2)
-                    ax.set_title(f"gen {i}", color='#8892b0', fontsize=6)
-            fig.suptitle(f'VAE Generated Digits — Temperature={temperature:.1f}',
-                         color='#4fc3f7', fontsize=11, fontweight='bold')
+            axes=np.array(axes).reshape(rows_r,cols_r)
+            for i in range(rows_r*cols_r):
+                ax=axes[i//cols_r,i%cols_r]; ax.axis('off'); ax.set_facecolor('#0a0f1e')
+                if i<n_gen:
+                    ax.imshow(gen_out[i].reshape(8,8),cmap='Blues',vmin=-2,vmax=2)
+            fig.suptitle(f'VAE Generated Digits — Temp={temp:.1f}',color='#4fc3f7',fontsize=11,fontweight='bold')
             plt.tight_layout(); st.pyplot(fig); plt.close()
         else:
-            fig, ax = plt.subplots(figsize=(8,4)); style_ax(ax, fig)
-            ax.scatter(generated[:,0], generated[:,1], c='#ab47bc', s=80,
-                       alpha=0.8, edgecolors='white', lw=0.5, label='Generated', marker='*', zorder=5)
-            ax.scatter(X_vae[:,0], X_vae[:,1], c='#4fc3f7', s=20,
-                       alpha=0.4, edgecolors='none', label='Real data')
-            ax.set_title(f'Generated vs Real Samples | Temperature={temperature:.1f}',
-                         color='#4fc3f7', fontsize=11, fontweight='bold')
-            ax.legend(facecolor='#0d1b2a', labelcolor='#ccd6f6', edgecolor='#1e3a5f')
-            st.pyplot(fig); plt.close()
+            fig,ax=plt.subplots(figsize=(8,4)); style_ax(ax,fig)
+            ax.scatter(X_vae[:,0],X_vae[:,1],c='#4fc3f7',s=18,alpha=0.35,label='Real data')
+            ax.scatter(gen_out[:,0],gen_out[:,1],c='#ab47bc',s=80,alpha=0.9,
+                       edgecolors='white',lw=0.6,marker='*',zorder=5,label='Generated')
+            ax.set_title(f'Generated vs Real | Temp={temp:.1f}',color='#4fc3f7',fontsize=11,fontweight='bold')
+            ax.legend(facecolor='#0d1b2a',labelcolor='#ccd6f6',edgecolor='#1e3a5f')
+            plt.tight_layout(); st.pyplot(fig); plt.close()
 
-        if st.button("🎲 Resample"):
-            import random
-            st.session_state["gen_seed"] = random.randint(0, 9999)
-            st.rerun()
-
-    # ── TAB 4: Latent Space ───────────────────────────────────
+    # ────────────────────────────────────────────────────────────
+    # TAB 4 — Latent Space
+    # ────────────────────────────────────────────────────────────
     with tab4:
-        st.markdown("### 🗺️ Latent Space Explorer")
-        st.markdown("""
-<div class="card">
-<h3>🗺️ Why the Latent Space Matters</h3>
-<p>The VAE's latent space is <strong>smooth and continuous</strong> — unlike a regular AE. This means:</p>
-<ul>
-<li>Similar inputs land in nearby regions</li>
-<li>You can <strong>interpolate</strong> between two points and get meaningful transitions</li>
-<li>The whole space is "filled" — no dead zones</li>
-</ul>
-<p>Below you can see the encoded positions of all training samples. Even without class labels during training, the VAE naturally clusters similar inputs together!</p>
-</div>
-""", unsafe_allow_html=True)
+        st.markdown("### 🗺️ Latent Space Visualization")
+        st.markdown("""<div class="card">
+<p>Even though the VAE trained with <b>no class labels</b>, similar inputs naturally cluster together in the latent space.
+The map below shows where each training sample ended up after compression.
+In a well-trained VAE, you should see smooth transitions between clusters — not sharp isolated islands.</p>
+<div class="highlight">💡 If clusters are completely separated with empty space between them, try lowering β or increasing latent dim</div>
+</div>""", unsafe_allow_html=True)
 
         if vae_latent >= 2:
-            fig, axes = plt.subplots(1, 2, figsize=(13, 5))
-            fig.patch.set_facecolor('#0a0f1e')
+            fig,axes=plt.subplots(1,2,figsize=(13,5)); fig.patch.set_facecolor('#0a0f1e')
             for ax in axes: style_ax(ax)
 
-            # Left: colored by class label
-            n_cls = len(np.unique(y_vae))
-            for i in range(n_cls):
-                mask = y_vae == i
-                axes[0].scatter(mu_all[mask,0], mu_all[mask,1],
-                                c=COLORS[i%len(COLORS)], s=30, alpha=0.75,
-                                edgecolors='white', lw=0.2, label=f'Class {i}')
-            axes[0].set_title("Latent Space — colored by class", color='#4fc3f7', fontsize=11, fontweight='bold')
-            axes[0].set_xlabel("z₁ (μ)", color='#8892b0'); axes[0].set_ylabel("z₂ (μ)", color='#8892b0')
-            axes[0].legend(fontsize=8, facecolor='#0d1b2a', labelcolor='#ccd6f6', edgecolor='#1e3a5f')
+            for i in range(n_cls_vae):
+                m=y_vae==i
+                axes[0].scatter(mu_all[m,0],mu_all[m,1],c=COLORS[i%len(COLORS)],
+                                s=22,alpha=0.6,edgecolors='none',label=f'Class {i}')
+            axes[0].set_title("Latent Space — colored by class",color='#4fc3f7',fontsize=11,fontweight='bold')
+            axes[0].set_xlabel("z₁ (μ)",color='#8892b0'); axes[0].set_ylabel("z₂ (μ)",color='#8892b0')
+            axes[0].legend(fontsize=8,facecolor='#0d1b2a',labelcolor='#ccd6f6',edgecolor='#1e3a5f')
 
-            # Right: colored by uncertainty (std)
-            std_all = np.exp(0.5 * lv_all)
-            uncertainty = std_all.mean(axis=1)
-            sc = axes[1].scatter(mu_all[:,0], mu_all[:,1], c=uncertainty,
-                                  cmap='plasma', s=30, alpha=0.8, edgecolors='none')
-            plt.colorbar(sc, ax=axes[1], label='Mean σ (uncertainty)')
-            axes[1].set_title("Latent Space — colored by uncertainty σ", color='#4fc3f7', fontsize=11, fontweight='bold')
-            axes[1].set_xlabel("z₁ (μ)", color='#8892b0'); axes[1].set_ylabel("z₂ (μ)", color='#8892b0')
-
+            uncertainty=np.exp(0.5*lv_all).mean(axis=1)
+            sc=axes[1].scatter(mu_all[:,0],mu_all[:,1],c=uncertainty,cmap='plasma',s=22,alpha=0.8)
+            plt.colorbar(sc,ax=axes[1],label='Mean σ')
+            axes[1].set_title("Latent Space — colored by uncertainty σ",color='#4fc3f7',fontsize=11,fontweight='bold')
+            axes[1].set_xlabel("z₁ (μ)",color='#8892b0'); axes[1].set_ylabel("z₂ (μ)",color='#8892b0')
             plt.tight_layout(); st.pyplot(fig); plt.close()
+            st.info("💡 Left: clusters emerge without labels. Right: bright = uncertain encoding (near class boundaries)")
 
-            st.info("💡 **Left**: classes naturally cluster — learned without labels! "
-                    "**Right**: bright = uncertain encoding (near class boundaries)")
+            # Interpolation
+            st.markdown("### 🔀 Interpolation Between Two Classes")
+            st.markdown("""<div class="card">
+<p>One of the coolest VAE features: walk a straight line between two class centers in latent space.
+Each decoded point along the path is a smooth blend between the two classes.
+This only works because the latent space is continuous — no gaps.</p>
+</div>""", unsafe_allow_html=True)
 
-            # Interpolation between two classes
-            st.markdown("### 🔀 Latent Space Interpolation")
-            st.markdown("Pick two class centers and walk a straight line between them in latent space:")
+            ic1,ic2=st.columns(2)
+            with ic1: ca=st.selectbox("From class",list(range(n_cls_vae)),index=0,key="vae_ca")
+            with ic2: cb=st.selectbox("To class",  list(range(n_cls_vae)),index=min(1,n_cls_vae-1),key="vae_cb")
 
-            n_steps = 10
-            c_avail = list(range(n_cls))
-            ic1, ic2 = st.columns(2)
-            with ic1: ca = st.selectbox("From class", c_avail, index=0, key="vae_ca")
-            with ic2: cb = st.selectbox("To class",   c_avail, index=min(1,n_cls-1), key="vae_cb")
+            n_steps=10
+            mu_a=mu_all[y_vae==ca].mean(0); mu_b=mu_all[y_vae==cb].mean(0)
+            z_path=np.array([(1-a)*mu_a+a*mu_b for a in np.linspace(0,1,n_steps)])
+            x_path=decode(z_path, w_full)
 
-            mu_a = mu_all[y_vae==ca].mean(0)
-            mu_b = mu_all[y_vae==cb].mean(0)
-            alphas = np.linspace(0, 1, n_steps)
-            z_interp = np.array([(1-a)*mu_a + a*mu_b for a in alphas])
-            x_interp = vae_decode(z_interp, Wd1, bd1, Wo, bo)
-
-            if vae_ds == "Digits (MNIST-like)":
-                fig, axes2 = plt.subplots(1, n_steps, figsize=(14, 2))
-                fig.patch.set_facecolor('#0a0f1e')
-                for i, (ax, img) in enumerate(zip(axes2, x_interp)):
-                    ax.imshow(img.reshape(8,8), cmap='Blues', vmin=-2, vmax=2)
-                    ax.axis('off')
-                    ax.set_title(f'{alphas[i]:.1f}', color='#8892b0', fontsize=6)
-                fig.suptitle(f'Interpolation: Class {ca} → Class {cb}',
-                             color='#4fc3f7', fontsize=10, fontweight='bold')
+            if is_digits:
+                fig,axes2=plt.subplots(1,n_steps,figsize=(14,2.2)); fig.patch.set_facecolor('#0a0f1e')
+                for i,(ax,img) in enumerate(zip(axes2,x_path)):
+                    ax.imshow(img.reshape(8,8),cmap='Blues',vmin=-2,vmax=2); ax.axis('off')
+                    ax.set_title(f'{i/(n_steps-1):.1f}',color='#8892b0',fontsize=7)
+                fig.suptitle(f'Interpolation: Class {ca} → Class {cb}',color='#4fc3f7',fontsize=10,fontweight='bold')
                 plt.tight_layout(); st.pyplot(fig); plt.close()
             else:
-                fig, ax = plt.subplots(figsize=(8,3)); style_ax(ax, fig)
-                ax.scatter(mu_all[y_vae==ca,0], mu_all[y_vae==ca,1], c=COLORS[ca%len(COLORS)], s=20, alpha=0.4)
-                ax.scatter(mu_all[y_vae==cb,0], mu_all[y_vae==cb,1], c=COLORS[cb%len(COLORS)], s=20, alpha=0.4)
-                ax.plot(z_interp[:,0], z_interp[:,1], 'o-', color='#00e5ff', lw=2.5,
-                        markersize=8, label=f'Class {ca} → {cb}', zorder=5)
-                ax.legend(facecolor='#0d1b2a', labelcolor='#ccd6f6', edgecolor='#1e3a5f')
-                ax.set_title(f'Interpolation path in latent space',
-                             color='#4fc3f7', fontsize=11, fontweight='bold')
+                fig,ax=plt.subplots(figsize=(8,3.5)); style_ax(ax,fig)
+                for i in range(n_cls_vae):
+                    m=y_vae==i
+                    ax.scatter(mu_all[m,0],mu_all[m,1],c=COLORS[i%len(COLORS)],s=18,alpha=0.3)
+                ax.plot(z_path[:,0],z_path[:,1],'o-',color='#00e5ff',lw=2.5,markersize=9,zorder=5,
+                        label=f'Class {ca} → {cb}')
+                ax.legend(facecolor='#0d1b2a',labelcolor='#ccd6f6',edgecolor='#1e3a5f')
+                ax.set_title('Interpolation path in latent space',color='#4fc3f7',fontsize=11,fontweight='bold')
                 plt.tight_layout(); st.pyplot(fig); plt.close()
         else:
-            fig, ax = plt.subplots(figsize=(10,3)); style_ax(ax, fig)
-            n_cls = len(np.unique(y_vae))
-            for i in range(n_cls):
-                mask = y_vae == i
-                ax.scatter(mu_all[mask,0], np.zeros(mask.sum()) + i*0.15,
-                           c=COLORS[i%len(COLORS)], s=40, alpha=0.8, label=f'Class {i}')
-            ax.set_title("1D Latent Space — set Latent Dim ≥ 2 for full visualization",
-                         color='#4fc3f7', fontsize=11, fontweight='bold')
-            ax.legend(facecolor='#0d1b2a', labelcolor='#ccd6f6', edgecolor='#1e3a5f')
+            st.info("Set Latent Dimension to 2+ to see the 2D latent space map.")
+
+    # ────────────────────────────────────────────────────────────
+    # TAB 5 — Anomaly Detection  (the correct way)
+    # ────────────────────────────────────────────────────────────
+    with tab5:
+        st.markdown("## 🚨 Example: VAE for Anomaly Detection")
+
+        st.markdown("""<div class="card">
+<h3>🎓 The Story — Why This Works</h3>
+<p>Imagine you work at a factory making digit "1". Every day you see thousands of 1s.
+You become an expert at recognizing and reconstructing 1s perfectly.</p>
+<p>One day someone hands you a "7". You've never learned to reconstruct 7s —
+your reconstruction will be distorted and blurry. The <b>error is high</b>.</p>
+<p>That's exactly how VAE anomaly detection works:</p>
+<ol>
+<li><b>Train the VAE on ONLY normal data</b> (e.g., only digit "1")</li>
+<li><b>Run all data through the VAE</b> and measure reconstruction error</li>
+<li><b>High error = anomaly</b> — the VAE couldn't reconstruct it because it never learned it</li>
+<li><b>Set a threshold</b> — anything above = flagged as anomaly</li>
+</ol>
+<div class="highlight">💡 Key rule: the VAE must be trained on normal data ONLY. If you train on everything, it learns anomalies too and can't detect them.</div>
+</div>""", unsafe_allow_html=True)
+
+        st.markdown("---")
+        st.markdown("### ⚙️ Setup: Choose Normal vs Anomaly")
+
+        anom_c1,anom_c2,anom_c3 = st.columns(3)
+        with anom_c1:
+            st.markdown("""<div style="color:#8892b0;font-size:0.78rem;margin-bottom:4px;">
+            🎯 <b>Normal Class</b><br>
+            The VAE will be trained <b>only</b> on this class.
+            Think of it as "what normal looks like".</div>""", unsafe_allow_html=True)
+            normal_cls = st.selectbox("Normal Class (train on this)", list(range(n_cls_vae)),
+                                       index=0, key="vae_norm_cls")
+
+        with anom_c2:
+            remaining = [c for c in range(n_cls_vae) if c != normal_cls]
+            st.markdown("""<div style="color:#8892b0;font-size:0.78rem;margin-bottom:4px;">
+            🔴 <b>Anomaly Class</b><br>
+            The class we want to <b>detect</b>.
+            The VAE has never seen this during training.</div>""", unsafe_allow_html=True)
+            anomaly_cls = st.selectbox("Anomaly Class (detect this)", remaining if remaining else [0],
+                                        index=0, key="vae_anom_cls2")
+
+        with anom_c3:
+            st.markdown("""<div style="color:#8892b0;font-size:0.78rem;margin-bottom:4px;">
+            📏 <b>Threshold Percentile</b><br>
+            Set to 95 = "flag the top 5% most unusual reconstruction errors as anomalies".<br>
+            Lower = more sensitive (more alerts). Higher = stricter (fewer alerts).</div>""", unsafe_allow_html=True)
+            thresh_pct = st.slider("Threshold Percentile", 50, 99, 95, 1, key="vae_thr2")
+
+        # ── Train a SEPARATE VAE on normal-only data ──────────
+        X_norm_only = X_vae[y_vae == normal_cls]
+        X_anom_test = X_vae[y_vae == anomaly_cls]
+        # also grab some normal test samples (not used in training)
+        np.random.seed(99)
+        perm        = np.random.permutation(len(X_norm_only))
+        split       = max(1, int(len(X_norm_only)*0.8))
+        X_norm_train= X_norm_only[perm[:split]]
+        X_norm_test = X_norm_only[perm[split:]]
+
+        if len(X_norm_train) < 4:
+            st.warning("Not enough normal samples. Pick a different normal class.")
+            st.stop()
+
+        with st.spinner(f"Training VAE on normal class {normal_cls} only ({len(X_norm_train)} samples)..."):
+            w_anom, anom_losses, anom_r, anom_kl = train_vae(
+                X_norm_train, vae_latent, vae_hidden, vae_beta,
+                min(vae_epochs, 200), vae_lr, seed=77)
+
+        # ── Compute scores ────────────────────────────────────
+        mse_norm, _, xr_norm, mu_norm = recon_score(X_norm_test,  w_anom)
+        mse_anom, _, xr_anom, mu_anom= recon_score(X_anom_test,   w_anom)
+
+        threshold = np.percentile(mse_norm, thresh_pct)
+
+        tp = int(np.sum(mse_anom  > threshold))
+        fp = int(np.sum(mse_norm  > threshold))
+        tn = int(np.sum(mse_norm  <= threshold))
+        fn = int(np.sum(mse_anom  <= threshold))
+        precision = tp/(tp+fp+1e-9)
+        recall    = tp/(tp+fn+1e-9)
+        f1        = 2*precision*recall/(precision+recall+1e-9)
+
+        st.markdown("---")
+        st.markdown(f"### 📊 Results: Trained on class **{normal_cls}**, detecting class **{anomaly_cls}**")
+
+        # Metrics
+        mc1,mc2,mc3,mc4,mc5 = st.columns(5)
+        for col,lbl,val,clr in zip([mc1,mc2,mc3,mc4,mc5],
+            ["✅ Detected\n(True Pos)","❌ False Alarms\n(False Pos)","🎯 Precision","📡 Recall","⚖️ F1 Score"],
+            [f"{tp}/{tp+fn}",f"{fp}/{fp+tn}",f"{precision:.1%}",f"{recall:.1%}",f"{f1:.3f}"],
+            ['#00e5ff','#ef5350','#66bb6a','#ffa726','#ab47bc']):
+            with col:
+                st.markdown(f'<div class="metric-box"><div class="value" style="color:{clr};">{val}</div><div class="label" style="white-space:pre-line;">{lbl}</div></div>',unsafe_allow_html=True)
+
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        # ── Score distribution histogram ──────────────────────
+        st.markdown("#### 📊 Step 1 — Look at the score distributions")
+        st.markdown("""<div class="card">
+<p>This histogram shows the reconstruction error for normal samples (blue) and anomaly samples (red).
+A good detector has <b>little overlap</b> between the two distributions.
+The vertical line is our threshold — everything to its right gets flagged as anomaly.</p>
+</div>""", unsafe_allow_html=True)
+
+        fig,axes=plt.subplots(1,2,figsize=(13,4.5)); fig.patch.set_facecolor('#0a0f1e')
+        for ax in axes: style_ax(ax)
+
+        all_scores = np.concatenate([mse_norm, mse_anom])
+        bins = np.linspace(all_scores.min(), np.percentile(all_scores,99), 45)
+
+        axes[0].hist(mse_norm, bins=bins, color='#4fc3f7', alpha=0.75,
+                     label=f'Normal (class {normal_cls})', density=True)
+        axes[0].hist(mse_anom, bins=bins, color='#ef5350', alpha=0.75,
+                     label=f'Anomaly (class {anomaly_cls})', density=True)
+        axes[0].axvline(threshold, color='#00e5ff', lw=2.5, ls='--',
+                        label=f'Threshold (p={thresh_pct})')
+        axes[0].fill_betweenx([0,axes[0].get_ylim()[1]+0.5], threshold, bins[-1],
+                               alpha=0.08, color='#ef5350')
+        axes[0].set_xlabel("Reconstruction Error (MSE)", color='#8892b0')
+        axes[0].set_ylabel("Density", color='#8892b0')
+        axes[0].set_title("Score Distribution — Normal vs Anomaly",
+                          color='#4fc3f7', fontsize=11, fontweight='bold')
+        axes[0].legend(fontsize=9, facecolor='#0d1b2a', labelcolor='#ccd6f6', edgecolor='#1e3a5f')
+
+        # Per-sample bar chart
+        ns = min(50, len(mse_norm)); na = min(25, len(mse_anom))
+        xs_n=np.arange(ns); xs_a=np.arange(ns+2, ns+2+na)
+        bar_n=['#4fc3f7' if s<=threshold else '#ffa726' for s in mse_norm[:ns]]
+        bar_a=['#ef5350' if s>threshold  else '#66bb6a'  for s in mse_anom[:na]]
+        axes[1].bar(xs_n, mse_norm[:ns], color=bar_n, width=0.9, alpha=0.85)
+        axes[1].bar(xs_a, mse_anom[:na], color=bar_a, width=0.9, alpha=0.85)
+        axes[1].axhline(threshold, color='#00e5ff', lw=2, ls='--', label=f'Threshold = {threshold:.4f}')
+        axes[1].axvline(ns+0.5, color='#ffffff', lw=1, ls=':', alpha=0.3)
+        ymax = max(mse_norm[:ns].max(), mse_anom[:na].max())*1.1
+        axes[1].text(ns/2, ymax*0.92, f'← Normal (cls {normal_cls})',
+                     ha='center', color='#4fc3f7', fontsize=8, fontfamily='monospace')
+        axes[1].text(ns+2+na/2, ymax*0.92, f'Anomaly (cls {anomaly_cls}) →',
+                     ha='center', color='#ef5350', fontsize=8, fontfamily='monospace')
+        axes[1].set_xlabel("Sample index", color='#8892b0')
+        axes[1].set_ylabel("Reconstruction Error", color='#8892b0')
+        axes[1].set_title("Per-sample Errors  |  🟠=normal flagged  🟢=anomaly missed",
+                          color='#4fc3f7', fontsize=10, fontweight='bold')
+        axes[1].legend(fontsize=9, facecolor='#0d1b2a', labelcolor='#ccd6f6', edgecolor='#1e3a5f')
+        plt.tight_layout(); st.pyplot(fig); plt.close()
+
+        # ── Reconstruction images for digits ──────────────────
+        if is_digits:
+            st.markdown("#### 🖼️ Step 2 — See Why the Error is High for Anomalies")
+            st.markdown(f"""<div class="card">
+<p>The VAE was trained only on digit <b>{normal_cls}</b>. Look at what happens when it tries to reconstruct digit <b>{anomaly_cls}</b>:
+it forces everything through what it knows — producing something that looks more like a {normal_cls} than a {anomaly_cls}.</p>
+<p>The <b>visual distortion</b> is exactly what the high reconstruction error measures numerically.</p>
+</div>""", unsafe_allow_html=True)
+
+            n_demo = min(7, len(X_norm_test), len(X_anom_test))
+            fig,axes2=plt.subplots(4,n_demo,figsize=(n_demo*2.0,8.5))
+            fig.patch.set_facecolor('#0a0f1e')
+            rows_data=[
+                (X_norm_test[:n_demo], xr_norm[:n_demo], f'Normal Input (digit {normal_cls})',   f'Normal Recon  ✅ err≈{mse_norm[:n_demo].mean():.3f}', '#4fc3f7','#00e5ff'),
+                (X_anom_test[:n_demo], xr_anom[:n_demo], f'Anomaly Input (digit {anomaly_cls})', f'Anomaly Recon ❌ err≈{mse_anom[:n_demo].mean():.3f}', '#ef5350','#ffa726'),
+            ]
+            r=0
+            for (Xi,Xr,lbl_in,lbl_rec,cin,crec) in rows_data:
+                for c in range(n_demo):
+                    ax=axes2[r,c]; ax.imshow(Xi[c].reshape(8,8),cmap='Blues',vmin=-2,vmax=2); ax.axis('off')
+                    if c==0: ax.set_ylabel(lbl_in, color=cin, fontsize=8, fontfamily='monospace')
+                r+=1
+                for c in range(n_demo):
+                    ax=axes2[r,c]; ax.imshow(Xr[c].reshape(8,8),cmap='Reds',vmin=-2,vmax=2); ax.axis('off')
+                    if c==0: ax.set_ylabel(lbl_rec, color=crec, fontsize=8, fontfamily='monospace')
+                r+=1
+            fig.suptitle(f'VAE trained on {normal_cls} — reconstructing {normal_cls} (top) vs {anomaly_cls} (bottom)',
+                         color='#4fc3f7',fontsize=11,fontweight='bold',y=1.01)
             plt.tight_layout(); st.pyplot(fig); plt.close()
 
+        # ── Latent space with anomalies ───────────────────────
+        if vae_latent >= 2:
+            st.markdown("#### 🗺️ Step 3 — Where do Anomalies Land in Latent Space?")
+            st.markdown(f"""<div class="card">
+<p>The VAE was trained on class {normal_cls}, so its latent space is shaped around {normal_cls}s.
+When anomaly class {anomaly_cls} is pushed through the encoder, it lands in unusual regions — 
+far from the normal cluster, or scattered randomly.</p>
+<p><b>Red X</b> = detected anomaly (high error). <b>Orange X</b> = missed anomaly (slipped through).</p>
+</div>""", unsafe_allow_html=True)
 
+            fig,ax=plt.subplots(figsize=(8,5)); style_ax(ax,fig)
+            ax.scatter(mu_norm[:,0],mu_norm[:,1], c='#4fc3f7',s=30,alpha=0.5,
+                       edgecolors='none', label=f'Normal test (cls {normal_cls})')
+            det   = mse_anom > threshold
+            undet = ~det
+            if det.any():
+                ax.scatter(mu_anom[det,0],mu_anom[det,1],c='#ef5350',s=130,
+                           marker='X',zorder=6,edgecolors='white',lw=0.8,
+                           label=f'Detected anomaly ({det.sum()})')
+            if undet.any():
+                ax.scatter(mu_anom[undet,0],mu_anom[undet,1],c='#ffa726',s=90,
+                           marker='X',zorder=5,edgecolors='white',lw=0.5,
+                           label=f'Missed anomaly ({undet.sum()})')
+            ax.set_title(f'Latent Space — Normal cls {normal_cls} vs Anomaly cls {anomaly_cls}',
+                         color='#4fc3f7',fontsize=11,fontweight='bold')
+            ax.set_xlabel("z₁",color='#8892b0'); ax.set_ylabel("z₂",color='#8892b0')
+            ax.legend(fontsize=9,facecolor='#0d1b2a',labelcolor='#ccd6f6',edgecolor='#1e3a5f')
+            plt.tight_layout(); st.pyplot(fig); plt.close()
+
+        # ── ROC + threshold sweep ──────────────────────────────
+        st.markdown("#### 📈 Step 4 — Find the Best Threshold")
+        st.markdown("""<div class="card">
+<h3>The Threshold Trade-off</h3>
+<p>There's no perfect threshold — you're always trading off between two errors:</p>
+<ul>
+<li><b>Too low threshold</b> → catch every anomaly (high recall) but also flag many normal samples (high false alarm rate). Good for: medical diagnosis, fraud, security — missing an anomaly is dangerous.</li>
+<li><b>Too high threshold</b> → very few false alarms but many anomalies slip through. Good for: situations where false alarms are costly (factory shutdowns, customer complaints).</li>
+</ul>
+<p>The <b>ROC Curve</b> shows this trade-off at every possible threshold. <b>AUC</b> (area under curve) summarizes overall separability — closer to 1.0 is better, 0.5 = random guessing.</p>
+</div>""", unsafe_allow_html=True)
+
+        pcts=list(range(50,100,2))
+        f1s,recs,precs,fprs_=[],[],[],[]
+        for p in pcts:
+            thr=np.percentile(mse_norm,p)
+            tp_=np.sum(mse_anom>thr); fp_=np.sum(mse_norm>thr)
+            tn_=np.sum(mse_norm<=thr); fn_=np.sum(mse_anom<=thr)
+            pr=tp_/(tp_+fp_+1e-9); re=tp_/(tp_+fn_+1e-9)
+            f1s.append(2*pr*re/(pr+re+1e-9))
+            recs.append(re); precs.append(pr)
+            fprs_.append(fp_/(fp_+tn_+1e-9))
+
+        fig,ax2=plt.subplots(1,2,figsize=(13,4.5)); fig.patch.set_facecolor('#0a0f1e')
+        for ax in ax2: style_ax(ax)
+
+        ax2[0].plot(pcts,f1s,   color='#ab47bc',lw=2,label='F1')
+        ax2[0].plot(pcts,recs,  color='#4fc3f7',lw=2,label='Recall')
+        ax2[0].plot(pcts,precs, color='#66bb6a',lw=2,label='Precision')
+        ax2[0].axvline(thresh_pct,color='#00e5ff',lw=2,ls='--',label=f'Current={thresh_pct}th')
+        ax2[0].set_xlabel("Threshold Percentile",color='#8892b0')
+        ax2[0].set_ylabel("Score",color='#8892b0')
+        ax2[0].set_title("Metrics vs Threshold",color='#4fc3f7',fontsize=11,fontweight='bold')
+        ax2[0].legend(fontsize=9,facecolor='#0d1b2a',labelcolor='#ccd6f6',edgecolor='#1e3a5f')
+        ax2[0].set_ylim(0,1.05)
+
+        sorted_pairs=sorted(zip(fprs_,recs))
+        sfprs=[p[0] for p in sorted_pairs]; srecs=[p[1] for p in sorted_pairs]
+        try:
+            from sklearn.metrics import auc as sk_auc
+            roc_auc=sk_auc(sfprs,srecs)
+        except:
+            roc_auc=0.0
+        ax2[1].plot(sfprs,srecs,color='#4fc3f7',lw=2.5,label=f'ROC (AUC={roc_auc:.2f})')
+        ax2[1].plot([0,1],[0,1],color='#1e3a5f',lw=1.5,ls='--',label='Random (AUC=0.5)')
+        cur_fpr=fp/(fp+tn+1e-9); cur_rec=recall
+        ax2[1].scatter([cur_fpr],[cur_rec],c='#00e5ff',s=140,zorder=6,
+                       edgecolors='white',lw=1.2,label='Current threshold')
+        ax2[1].set_xlabel("False Positive Rate",color='#8892b0')
+        ax2[1].set_ylabel("True Positive Rate (Recall)",color='#8892b0')
+        ax2[1].set_title(f"ROC Curve | AUC = {roc_auc:.3f}",color='#4fc3f7',fontsize=11,fontweight='bold')
+        ax2[1].legend(fontsize=9,facecolor='#0d1b2a',labelcolor='#ccd6f6',edgecolor='#1e3a5f')
+        ax2[1].set_xlim(0,1); ax2[1].set_ylim(0,1.05)
+        plt.tight_layout(); st.pyplot(fig); plt.close()
+
+
+# ── Footer ───────────────────────────────────────────────────
 st.markdown("---")
 st.markdown("""
 <div style="text-align:center;color:#8892b0;font-family:'JetBrains Mono',monospace;font-size:0.75rem;padding:0.4rem 0;">
-    ML Explorer &nbsp;·&nbsp; SVM · Regression · Decision Tree · K-Means · KNN · MLP · AutoEncoder &nbsp;·&nbsp; 🤖
+    ML Explorer &nbsp;·&nbsp; SVM · Regression · Decision Tree · K-Means · KNN · MLP · AutoEncoder · VAE &nbsp;·&nbsp; 🤖
 </div>
 """, unsafe_allow_html=True)
