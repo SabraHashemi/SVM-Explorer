@@ -221,7 +221,8 @@ with st.sidebar:
         "Algorithm",
         ["⚡ SVM", "📈 Regression", "🌳 Decision Tree / RF",
          "🔵 K-Means Clustering", "👥 KNN", "🧠 Neural Network (MLP)",
-         "🔁 AutoEncoder", "🎲 VAE (Variational)", "🔗 Contrastive Learning"],
+         "🔁 AutoEncoder", "🎲 VAE (Variational)", "🔗 Contrastive Learning",
+         "🎯 Uncertainty Estimation"],
         label_visibility="collapsed"
     )
     st.markdown("---")
@@ -2652,10 +2653,772 @@ This is called a <b>linear probe</b> or <b>linear evaluation</b>.</p>
                 st.markdown(f'<div class="metric-box"><div class="value" style="color:{clr};">{val}</div><div class="label">{lbl}</div></div>',unsafe_allow_html=True)
 
     # ─────────────────────────────────────────────────────────
+
+elif algo == "🎯 Uncertainty Estimation":
+    st.markdown("""
+<div class="main-header">
+<h1>🎯 Uncertainty Estimation in Deep Learning</h1>
+<p>Know what your model doesn't know — MC Dropout, Ensembles, Variational Inference & TTA</p>
+</div>""", unsafe_allow_html=True)
+
+    # ═══════════════════════════════════════════════════════════
+    # SIDEBAR
+    # ═══════════════════════════════════════════════════════════
+    with st.sidebar:
+        st.markdown("### ⚙️ Settings")
+
+        st.markdown("""<div style="color:#8892b0;font-size:0.75rem;margin-bottom:3px;">
+        🔄 <b>MC Dropout Rate</b><br>
+        Fraction of neurons randomly dropped during inference.<br>
+        • <b>0.0</b>: standard deterministic prediction (no uncertainty)<br>
+        • <b>0.1–0.3</b>: good balance — some uncertainty, still accurate<br>
+        • <b>0.5+</b>: high uncertainty, accuracy may drop<br>
+        Higher = more diverse predictions across forward passes.</div>""", unsafe_allow_html=True)
+        dropout_rate = st.slider("MC Dropout Rate", 0.0, 0.6, 0.2, 0.05, key="unc_dr")
+
+        st.markdown("""<div style="color:#8892b0;font-size:0.75rem;margin:8px 0 3px;">
+        🔁 <b>MC Samples (T)</b><br>
+        How many stochastic forward passes to run.<br>
+        • More passes → more accurate uncertainty estimate, but slower<br>
+        • <b>10–30</b> is usually enough; beyond 50 gives diminishing returns<br>
+        Think of it as: asking the model the same question T times and measuring disagreement.</div>""", unsafe_allow_html=True)
+        mc_samples = st.slider("MC Samples (T)", 5, 50, 20, 5, key="unc_mc")
+
+        st.markdown("""<div style="color:#8892b0;font-size:0.75rem;margin:8px 0 3px;">
+        🌲 <b>Ensemble Size</b><br>
+        Number of independently trained models in the ensemble.<br>
+        • <b>3–5</b> models: significant diversity gain<br>
+        • Beyond 10: diminishing returns, high compute cost<br>
+        Each model is trained with a different random seed → different learned representations.</div>""", unsafe_allow_html=True)
+        ensemble_size = st.slider("Ensemble Size", 2, 8, 3, 1, key="unc_ens")
+
+        st.markdown("""<div style="color:#8892b0;font-size:0.75rem;margin:8px 0 3px;">
+        🔊 <b>OOD Noise Level</b><br>
+        How different the out-of-distribution (OOD) test samples are.<br>
+        This simulates EMNIST vs MNIST from the notebook — unknown data the model never trained on.<br>
+        Higher = harder to classify = should trigger higher uncertainty.</div>""", unsafe_allow_html=True)
+        ood_noise = st.slider("OOD Noise Level", 0.1, 2.0, 0.8, 0.1, key="unc_ood")
+
+        st.markdown("""<div style="color:#8892b0;font-size:0.75rem;margin:8px 0 3px;">
+        🎲 <b>TTA Augmentation Strength</b><br>
+        How strongly to perturb input during Test Time Augmentation.<br>
+        Each perturbed version produces slightly different predictions — their spread = uncertainty.</div>""", unsafe_allow_html=True)
+        tta_strength = st.slider("TTA Strength", 0.05, 0.8, 0.2, 0.05, key="unc_tta")
+
+        st.markdown("---")
+        st.markdown("### 📊 Dataset")
+        unc_ds = st.selectbox("Base Dataset",
+                              ["Digits (MNIST-like)", "Iris", "Moons", "Blobs"],
+                              key="unc_ds")
+        unc_hidden = st.slider("Hidden Layer Size", 16, 128, 64, 16, key="unc_hid")
+
+    # ═══════════════════════════════════════════════════════════
+    # DATA
+    # ═══════════════════════════════════════════════════════════
+    @st.cache_data
+    def get_unc_data(name, ood_noise, seed=42):
+        np.random.seed(seed)
+        if name == "Digits (MNIST-like)":
+            d = datasets.load_digits()
+            X, y = d.data.astype(np.float32), d.target
+        elif name == "Iris":
+            d = datasets.load_iris()
+            X, y = d.data.astype(np.float32), d.target
+        elif name == "Moons":
+            X, y = datasets.make_moons(300, noise=0.1, random_state=seed)
+            X = X.astype(np.float32)
+        else:
+            X, y = datasets.make_blobs(300, centers=4, n_features=4, random_state=seed)
+            X = X.astype(np.float32)
+
+        sc = StandardScaler()
+        X = sc.fit_transform(X).astype(np.float32)
+
+        # OOD data: same shape but from a shifted/noisy distribution (simulating EMNIST)
+        X_ood = np.random.randn(*X.shape).astype(np.float32) * ood_noise
+        # Add some structure to make it partially recognisable
+        X_ood += X * 0.3
+
+        Xtr, Xte, ytr, yte = train_test_split(X, y, test_size=0.25, random_state=seed)
+        return Xtr, Xte, ytr, yte, X_ood
+
+    Xtr, Xte, ytr, yte, X_ood = get_unc_data(unc_ds, ood_noise)
+    n_in_unc = Xtr.shape[1]
+    n_cls_unc = len(np.unique(ytr))
+
+    # ═══════════════════════════════════════════════════════════
+    # NUMPY MLP with controllable dropout
+    # ═══════════════════════════════════════════════════════════
+    def relu(x):    return np.maximum(0, x)
+    def softmax(x):
+        e = np.exp(x - x.max(axis=1, keepdims=True))
+        return e / e.sum(axis=1, keepdims=True)
+
+    def mlp_forward(X, W1, b1, W2, b2, W3, b3, dropout_rate=0.0, training=False):
+        h1 = relu(X @ W1 + b1)
+        if dropout_rate > 0:
+            mask1 = (np.random.rand(*h1.shape) > dropout_rate).astype(float)
+            h1 = h1 * mask1 / (1 - dropout_rate + 1e-8)
+        h2 = relu(h1 @ W2 + b2)
+        if dropout_rate > 0:
+            mask2 = (np.random.rand(*h2.shape) > dropout_rate).astype(float)
+            h2 = h2 * mask2 / (1 - dropout_rate + 1e-8)
+        logits = h2 @ W3 + b3
+        return softmax(logits)
+
+    @st.cache_data
+    def train_mlp(X, y, hidden, n_cls, lr=0.01, epochs=100, seed=42):
+        np.random.seed(seed)
+        n = X.shape[1]
+        W1 = np.random.randn(n, hidden) * np.sqrt(2/n)
+        b1 = np.zeros((1, hidden))
+        W2 = np.random.randn(hidden, hidden) * np.sqrt(2/hidden)
+        b2 = np.zeros((1, hidden))
+        W3 = np.random.randn(hidden, n_cls) * np.sqrt(2/hidden)
+        b3 = np.zeros((1, n_cls))
+
+        Y = np.eye(n_cls)[y]
+        bs = min(64, len(X))
+        for ep in range(epochs):
+            idx = np.random.permutation(len(X))
+            for i in range(0, len(X)-bs+1, bs):
+                Xb = X[idx[i:i+bs]]; Yb = Y[idx[i:i+bs]]
+                h1 = relu(Xb @ W1 + b1)
+                h2 = relu(h1 @ W2 + b2)
+                p  = softmax(h2 @ W3 + b3)
+                dp = (p - Yb) / bs
+                dW3 = h2.T @ dp; db3 = dp.sum(0, keepdims=True)
+                dh2 = dp @ W3.T * (h2 > 0)
+                dW2 = h1.T @ dh2; db2 = dh2.sum(0, keepdims=True)
+                dh1 = dh2 @ W2.T * (h1 > 0)
+                dW1 = Xb.T @ dh1; db1 = dh1.sum(0, keepdims=True)
+                for W,b,dW,db in [(W1,b1,dW1,db1),(W2,b2,dW2,db2),(W3,b3,dW3,db3)]:
+                    W -= lr * np.clip(dW,-2,2)
+                    b -= lr * np.clip(db,-2,2)
+        return W1,b1,W2,b2,W3,b3
+
+    # ── Uncertainty metrics (from notebook) ──────────────────
+    def entropy(probs):
+        """Shannon entropy of the averaged prediction distribution.
+        High entropy = model is confused = uncertain."""
+        eps = 1e-8
+        return -np.sum(probs * np.log(probs + eps), axis=1)
+
+    def predictive_variance(all_probs):
+        """Mean variance across classes over multiple draws.
+        High variance = predictions change a lot across draws = uncertain."""
+        return np.var(all_probs, axis=0).mean(axis=1)
+
+    def max_softmax_response(probs):
+        """Maximum softmax probability. LOW = uncertain (model is not confident in any class).
+        Note: inverted from entropy — lower max_softmax = higher uncertainty."""
+        return np.max(probs, axis=1)
+
+    # ── Train base model ──────────────────────────────────────
+    with st.spinner("Training base MLP..."):
+        base_w = train_mlp(Xtr, ytr, unc_hidden, n_cls_unc, seed=42)
+
+    W1,b1,W2,b2,W3,b3 = base_w
+    base_acc = accuracy_score(yte, np.argmax(mlp_forward(Xte,*base_w,dropout_rate=0.0), axis=1))
+
+    # ── MC Dropout predictions ────────────────────────────────
+    np.random.seed(0)
+    mc_preds_id  = np.array([mlp_forward(Xte, *base_w, dropout_rate=dropout_rate)
+                              for _ in range(mc_samples)])   # (T, N, C)
+    mc_preds_ood = np.array([mlp_forward(X_ood, *base_w, dropout_rate=dropout_rate)
+                              for _ in range(mc_samples)])
+
+    mc_avg_id  = mc_preds_id.mean(axis=0)   # (N, C)
+    mc_avg_ood = mc_preds_ood.mean(axis=0)
+
+    # Deterministic predictions (T=1, no dropout)
+    det_id  = mlp_forward(Xte,  *base_w, dropout_rate=0.0)
+    det_ood = mlp_forward(X_ood, *base_w, dropout_rate=0.0)
+
+    # Entropy scores
+    ent_mc_id  = entropy(mc_avg_id);   ent_mc_ood  = entropy(mc_avg_ood)
+    ent_det_id = entropy(det_id);      ent_det_ood = entropy(det_ood)
+    var_mc_id  = predictive_variance(mc_preds_id)
+    var_mc_ood = predictive_variance(mc_preds_ood)
+    msr_mc_id  = max_softmax_response(mc_avg_id)
+    msr_mc_ood = max_softmax_response(mc_avg_ood)
+
+    # ── Ensemble predictions ──────────────────────────────────
+    with st.spinner(f"Training {ensemble_size} ensemble models..."):
+        ens_weights = [train_mlp(Xtr, ytr, unc_hidden, n_cls_unc, seed=s)
+                       for s in range(ensemble_size)]
+
+    ens_preds_id  = np.array([mlp_forward(Xte,  *w, dropout_rate=0.0) for w in ens_weights])
+    ens_preds_ood = np.array([mlp_forward(X_ood, *w, dropout_rate=0.0) for w in ens_weights])
+    ens_avg_id  = ens_preds_id.mean(axis=0)
+    ens_avg_ood = ens_preds_ood.mean(axis=0)
+
+    ent_ens_id  = entropy(ens_avg_id);  ent_ens_ood  = entropy(ens_avg_ood)
+    var_ens_id  = predictive_variance(ens_preds_id)
+    var_ens_ood = predictive_variance(ens_preds_ood)
+    msr_ens_id  = max_softmax_response(ens_avg_id)
+    msr_ens_ood = max_softmax_response(ens_avg_ood)
+
+    # ── TTA predictions ───────────────────────────────────────
+    np.random.seed(1)
+    tta_preds_id  = np.array([mlp_forward(Xte  + np.random.randn(*Xte.shape)*tta_strength,
+                                           *base_w, dropout_rate=0.0)
+                               for _ in range(mc_samples)])
+    tta_preds_ood = np.array([mlp_forward(X_ood + np.random.randn(*X_ood.shape)*tta_strength,
+                                           *base_w, dropout_rate=0.0)
+                               for _ in range(mc_samples)])
+    tta_avg_id  = tta_preds_id.mean(axis=0)
+    tta_avg_ood = tta_preds_ood.mean(axis=0)
+
+    ent_tta_id  = entropy(tta_avg_id);  ent_tta_ood  = entropy(tta_avg_ood)
+    var_tta_id  = predictive_variance(tta_preds_id)
+    var_tta_ood = predictive_variance(tta_preds_ood)
+    msr_tta_id  = max_softmax_response(tta_avg_id)
+    msr_tta_ood = max_softmax_response(tta_avg_ood)
+
+    # ═══════════════════════════════════════════════════════════
+    # TABS
+    # ═══════════════════════════════════════════════════════════
+    tab1,tab2,tab3,tab4,tab5,tab6 = st.tabs([
+        "📖 Why Uncertainty?",
+        "📐 Uncertainty Metrics",
+        "🔄 MC Dropout",
+        "🌲 Ensemble",
+        "🎭 Test Time Augmentation",
+        "📊 Method Comparison"
+    ])
+
+    # ─────────────────────────────────────────────────────────
+    # TAB 1 — Why Uncertainty?
+    # ─────────────────────────────────────────────────────────
+    with tab1:
+        st.markdown("## Why Does Uncertainty Matter?")
+
+        c1,c2 = st.columns([1,1])
+        with c1:
+            st.markdown("""
+<div class="card">
+<h3>🤔 The Problem: Overconfident Neural Networks</h3>
+<p>A standard neural network trained on cats and dogs will happily classify a photo of a <b>car</b> as "cat" or "dog" — with 99% confidence. It has no way of saying "I've never seen anything like this."</p>
+<p>This is a critical failure mode in real-world applications:</p>
+<ul>
+<li>🏥 <b>Medical diagnosis</b>: model trained on chest X-rays gets an MRI scan — high confidence wrong answer is dangerous</li>
+<li>🚗 <b>Self-driving cars</b>: sensor sees something never in training data — should slow down, not accelerate confidently</li>
+<li>💰 <b>Financial models</b>: market conditions shift dramatically — overconfident predictions cause huge losses</li>
+<li>🔬 <b>Drug discovery</b>: predicting toxicity of a new molecule outside training distribution</li>
+</ul>
+<div class="highlight">💡 A good model should know what it doesn't know — that's what uncertainty estimation provides</div>
+</div>
+
+<div class="card">
+<h3>📦 In-Distribution vs Out-of-Distribution (OOD)</h3>
+<p>The notebook uses <b>MNIST</b> (handwritten digits, what the model trained on) vs <b>EMNIST</b> (handwritten letters, never seen during training).</p>
+<p>This is the key test of uncertainty: does the model give <b>higher uncertainty</b> on OOD samples?</p>
+<ul>
+<li><b>In-distribution (ID)</b>: samples from the same data the model was trained on → should have LOW uncertainty</li>
+<li><b>Out-of-distribution (OOD)</b>: samples from a different population → should have HIGH uncertainty</li>
+</ul>
+<p>In this app, we simulate this with:</p>
+<ul>
+<li><b>ID data</b>: the test split of your chosen dataset</li>
+<li><b>OOD data</b>: random noise mixed with the original data (controlled by OOD Noise slider)</li>
+</ul>
+<div class="highlight">💡 A perfect uncertainty method would perfectly separate ID (low uncertainty) from OOD (high uncertainty)</div>
+</div>
+
+<div class="card">
+<h3>🗺️ Two Types of Uncertainty</h3>
+<p>Uncertainty in ML splits into two fundamentally different sources:</p>
+<ul>
+<li><b>Aleatoric uncertainty</b> (irreducible): comes from <em>noise in the data itself</em>. Even with infinite data, you can't resolve it. Example: a blurry photo where even humans can't tell the digit. No amount of training helps.</li>
+<li><b>Epistemic uncertainty</b> (reducible): comes from <em>lack of knowledge</em> — the model hasn't seen enough data to be confident. Example: OOD samples. More training data covering that region would reduce it.</li>
+</ul>
+<p>MC Dropout, Ensembles, and VI primarily capture <b>epistemic</b> uncertainty. This is the kind you can act on: "collect more data here!"</p>
+<div class="highlight">💡 Epistemic = model uncertainty (fixable). Aleatoric = data uncertainty (irreducible).</div>
+</div>
+
+<div class="card">
+<h3>🔑 Key Terminology</h3>
+<ul>
+<li><b>Predictive distribution p(y|x)</b>: the full distribution over outputs, not just the argmax</li>
+<li><b>Bayesian Neural Network</b>: treats model weights as distributions, not fixed values. Exact inference is intractable — MC Dropout and VI are approximations.</li>
+<li><b>Calibration</b>: a model is well-calibrated if its 90% confidence predictions are correct 90% of the time. Most NNs are overconfident (poorly calibrated).</li>
+<li><b>AUROC</b>: area under ROC curve for OOD detection — measures how well uncertainty separates ID from OOD samples</li>
+</ul>
+</div>
+""", unsafe_allow_html=True)
+
+        with c2:
+            # ── Overconfidence demo ───────────────────────────
+            fig,axes=plt.subplots(2,2,figsize=(8,7))
+            fig.patch.set_facecolor('#0a0f1e')
+            for ax in axes.ravel(): style_ax(ax)
+
+            # Plot 1: ID vs OOD score distribution (deterministic — overconfident)
+            ax=axes[0,0]
+            ax.hist(ent_det_id, bins=25, color='#4fc3f7', alpha=0.7, density=True, label='ID (test)')
+            ax.hist(ent_det_ood, bins=25, color='#ef5350', alpha=0.7, density=True, label='OOD')
+            ax.set_title('Deterministic Entropy', color='#4fc3f7', fontsize=10, fontweight='bold')
+            ax.set_xlabel('Entropy', color='#8892b0')
+            ax.legend(fontsize=8, facecolor='#0d1b2a', labelcolor='#ccd6f6', edgecolor='#1e3a5f')
+
+            # Plot 2: MC Dropout — better separation
+            ax=axes[0,1]
+            ax.hist(ent_mc_id,  bins=25, color='#4fc3f7', alpha=0.7, density=True, label='ID')
+            ax.hist(ent_mc_ood, bins=25, color='#ef5350', alpha=0.7, density=True, label='OOD')
+            ax.set_title(f'MC Dropout Entropy (T={mc_samples})', color='#4fc3f7', fontsize=10, fontweight='bold')
+            ax.set_xlabel('Entropy', color='#8892b0')
+            ax.legend(fontsize=8, facecolor='#0d1b2a', labelcolor='#ccd6f6', edgecolor='#1e3a5f')
+
+            # Plot 3: Softmax confidence — the overconfidence problem
+            ax=axes[1,0]
+            ax.hist(msr_mc_id,  bins=25, color='#4fc3f7', alpha=0.7, density=True, label='ID')
+            ax.hist(msr_mc_ood, bins=25, color='#ef5350', alpha=0.7, density=True, label='OOD')
+            ax.set_title('Max Softmax Response', color='#4fc3f7', fontsize=10, fontweight='bold')
+            ax.set_xlabel('Max Probability', color='#8892b0')
+            ax.legend(fontsize=8, facecolor='#0d1b2a', labelcolor='#ccd6f6', edgecolor='#1e3a5f')
+
+            # Plot 4: Variance
+            ax=axes[1,1]
+            ax.hist(var_mc_id,  bins=25, color='#4fc3f7', alpha=0.7, density=True, label='ID')
+            ax.hist(var_mc_ood, bins=25, color='#ef5350', alpha=0.7, density=True, label='OOD')
+            ax.set_title('Predictive Variance', color='#4fc3f7', fontsize=10, fontweight='bold')
+            ax.set_xlabel('Variance', color='#8892b0')
+            ax.legend(fontsize=8, facecolor='#0d1b2a', labelcolor='#ccd6f6', edgecolor='#1e3a5f')
+
+            fig.suptitle('ID vs OOD: All Metrics Overview', color='#4fc3f7',
+                         fontsize=11, fontweight='bold')
+            plt.tight_layout(); st.pyplot(fig); plt.close()
+
+            st.markdown(f"""<div class="metric-box">
+<div class="value" style="color:#00e5ff;">{base_acc:.1%}</div>
+<div class="label">Base Model Accuracy on ID test set</div>
+</div>""", unsafe_allow_html=True)
+
+    # ─────────────────────────────────────────────────────────
+    # TAB 2 — Uncertainty Metrics
+    # ─────────────────────────────────────────────────────────
+    with tab2:
+        st.markdown("## 📐 Uncertainty Metrics — From the Notebook")
+
+        st.markdown("""
+<div class="card">
+<h3>🧮 Metric 1: Entropy (Most Popular)</h3>
+<p><b>Formula</b>: H(p) = −Σ p(y|x) · log p(y|x)</p>
+<p><b>What it measures</b>: how spread out the probability distribution is over classes.</p>
+<ul>
+<li>If the model says [0.99, 0.01] → entropy ≈ 0 → very confident (certain)</li>
+<li>If the model says [0.25, 0.25, 0.25, 0.25] → entropy is maximum → completely uncertain</li>
+<li>For MC Dropout: average the T softmax outputs first, then compute entropy of the average</li>
+</ul>
+<p><b>In the notebook</b>: <code>entropy = -np.sum(avg_preds * np.log(avg_preds + eps), axis=1)</code></p>
+<div class="highlight">💡 Entropy is the most reliable metric — it's theoretically grounded in information theory</div>
+</div>
+
+<div class="card">
+<h3>📊 Metric 2: Predictive Variance</h3>
+<p><b>Formula</b>: Var[p(y|x)] = variance of softmax probabilities across T draws</p>
+<p><b>What it measures</b>: how much the model's output changes between stochastic forward passes.</p>
+<ul>
+<li>High variance → model gives wildly different answers each time → uncertain</li>
+<li>Low variance → consistent predictions → confident</li>
+<li>This directly measures <b>epistemic uncertainty</b> — uncertainty from model parameters</li>
+</ul>
+<p><b>In the notebook</b>: <code>variance = np.var(avg_preds, axis=1)</code></p>
+<div class="highlight">💡 Variance requires multiple forward passes — it's a measure of disagreement between draws</div>
+</div>
+
+<div class="card">
+<h3>🔝 Metric 3: Max Softmax Response (MSR)</h3>
+<p><b>Formula</b>: MSR = max(p(y|x)) — just the highest softmax probability</p>
+<p><b>What it measures</b>: how confident the model is in its top prediction.</p>
+<ul>
+<li>MSR close to 1.0 → model very confident (but could still be wrong!)</li>
+<li>MSR close to 1/n_classes → uniform distribution → uncertain</li>
+<li><b>Note</b>: MSR is inverted from entropy — low MSR = high uncertainty. To compare: use 1-MSR as uncertainty.</li>
+<li>Simple but surprisingly effective baseline from Hendrycks & Gimpel (2017)</li>
+</ul>
+<p><b>In the notebook</b>: <code>max_response = np.max(avg_preds, axis=1)</code></p>
+<div class="highlight">💡 MSR is the simplest uncertainty measure — no extra computation, just read the max softmax</div>
+</div>
+""", unsafe_allow_html=True)
+
+        # Interactive metric visualiser
+        st.markdown("### 🔍 Interactive: Compare Metrics on ID vs OOD")
+        metric_choice = st.radio("Select metric to visualise",
+                                  ["Entropy", "Predictive Variance", "Max Softmax Response"],
+                                  horizontal=True, key="unc_metric")
+
+        if metric_choice == "Entropy":
+            sc_id, sc_ood = ent_mc_id, ent_mc_ood
+            xlabel = "Entropy (higher = more uncertain)"
+        elif metric_choice == "Predictive Variance":
+            sc_id, sc_ood = var_mc_id, var_mc_ood
+            xlabel = "Variance (higher = more uncertain)"
+        else:
+            sc_id, sc_ood = 1-msr_mc_id, 1-msr_mc_ood
+            xlabel = "1 - Max Softmax Response (higher = more uncertain)"
+
+        fig,axes=plt.subplots(1,2,figsize=(13,4))
+        fig.patch.set_facecolor('#0a0f1e')
+        for ax in axes: style_ax(ax)
+
+        all_vals = np.concatenate([sc_id, sc_ood])
+        bins = np.linspace(all_vals.min(), np.percentile(all_vals,99), 40)
+        axes[0].hist(sc_id,  bins=bins, color='#4fc3f7', alpha=0.75, density=True, label='In-Distribution (test)')
+        axes[0].hist(sc_ood, bins=bins, color='#ef5350', alpha=0.75, density=True, label='Out-of-Distribution')
+        axes[0].set_xlabel(xlabel, color='#8892b0')
+        axes[0].set_ylabel('Density', color='#8892b0')
+        axes[0].set_title(f'{metric_choice} Distribution (MC Dropout T={mc_samples})',
+                          color='#4fc3f7', fontsize=11, fontweight='bold')
+        axes[0].legend(fontsize=9, facecolor='#0d1b2a', labelcolor='#ccd6f6', edgecolor='#1e3a5f')
+
+        # Per-sample bar
+        ns = min(50,len(sc_id)); na = min(30,len(sc_ood))
+        thr = np.percentile(sc_id, 90)
+        col_id  = ['#4fc3f7' if s<=thr else '#ffa726' for s in sc_id[:ns]]
+        col_ood = ['#ef5350' if s>thr  else '#66bb6a'  for s in sc_ood[:na]]
+        axes[1].bar(range(ns), sc_id[:ns], color=col_id, width=0.9, alpha=0.85)
+        axes[1].bar(range(ns+2, ns+2+na), sc_ood[:na], color=col_ood, width=0.9, alpha=0.85)
+        axes[1].axhline(thr, color='#00e5ff', lw=2, ls='--', label=f'90th pct threshold')
+        axes[1].axvline(ns+0.5, color='#ffffff', lw=1, ls=':', alpha=0.3)
+        ymax = max(sc_id[:ns].max(), sc_ood[:na].max())*1.1
+        axes[1].text(ns/2, ymax*0.92, '← ID', ha='center', color='#4fc3f7', fontsize=8, fontfamily='monospace')
+        axes[1].text(ns+2+na/2, ymax*0.92, 'OOD →', ha='center', color='#ef5350', fontsize=8, fontfamily='monospace')
+        axes[1].set_xlabel('Sample Index', color='#8892b0')
+        axes[1].set_ylabel(metric_choice, color='#8892b0')
+        axes[1].set_title('Per-Sample Uncertainty', color='#4fc3f7', fontsize=11, fontweight='bold')
+        axes[1].legend(fontsize=9, facecolor='#0d1b2a', labelcolor='#ccd6f6', edgecolor='#1e3a5f')
+        plt.tight_layout(); st.pyplot(fig); plt.close()
+
+    # ─────────────────────────────────────────────────────────
+    # TAB 3 — MC Dropout
+    # ─────────────────────────────────────────────────────────
+    with tab3:
+        st.markdown("## 🔄 MC Dropout — Monte Carlo Dropout")
+
+        c1,c2 = st.columns([1,1])
+        with c1:
+            st.markdown(f"""
+<div class="card">
+<h3>🎲 The Core Idea</h3>
+<p>Standard dropout is only active during <b>training</b> — it's turned off at test time.
+Gal & Ghahramani (2016) showed that keeping dropout <b>active during inference</b>
+is equivalent to approximate Bayesian inference in a deep Gaussian process.</p>
+<p>The procedure:</p>
+<ol>
+<li>Train with dropout as normal</li>
+<li>At test time, keep dropout ON (training=True)</li>
+<li>Run the same input through the network <b>T times</b></li>
+<li>Each run gives a different output (different neurons dropped)</li>
+<li>Average the T outputs → better prediction. Measure their spread → uncertainty.</li>
+</ol>
+<div class="highlight">💡 The insight: dropout masks sample random sub-networks. T runs = T different sub-networks voting.</div>
+</div>
+
+<div class="card">
+<h3>📐 From the Notebook (ResNetMC)</h3>
+<p>The notebook implements a ResNet18 with dropout layers that use <code>training=True</code> always:</p>
+<pre style="background:#0d1b2a;padding:0.8rem;border-radius:8px;font-size:0.8rem;color:#ccd6f6;">
+def call(self, inputs):
+    x = self.block_a(inputs)
+    x = self.drop1(x, training=True)  # ← always on!
+    x = self.block_b(x)
+    x = self.drop2(x, training=True)
+    ...
+</pre>
+<p>Then <code>predict_many_times(inputs, draws=T)</code> runs it T times and stacks results.</p>
+<div class="highlight">💡 This is <em>free</em> uncertainty — just keep dropout on at test time, no architecture changes needed</div>
+</div>
+
+<div class="card">
+<h3>⚙️ Current Settings</h3>
+<ul>
+<li>Dropout rate: <b>{dropout_rate:.2f}</b> — {dropout_rate*100:.0f}% of neurons dropped each forward pass</li>
+<li>T (draws): <b>{mc_samples}</b> stochastic forward passes per prediction</li>
+<li>Effective sub-networks sampled: 2^(n_neurons × dropout_rate) possible combinations</li>
+</ul>
+</div>
+
+<div class="card">
+<h3>✅ Pros & ❌ Cons</h3>
+<ul>
+<li>✅ Works with any existing dropout architecture — no retraining needed if dropout already present</li>
+<li>✅ Theoretically motivated as approximate Bayesian inference</li>
+<li>✅ Cheap: just T forward passes</li>
+<li>❌ Only captures uncertainty where dropout is applied</li>
+<li>❌ Requires careful dropout rate tuning</li>
+<li>❌ T passes = T× slower inference</li>
+<li>❌ Dropout rate found via cross-validation ≠ optimal for uncertainty estimation</li>
+</ul>
+</div>
+""", unsafe_allow_html=True)
+
+        with c2:
+            # Visualise how MC predictions spread
+            fig,axes=plt.subplots(3,1,figsize=(7,9))
+            fig.patch.set_facecolor('#0a0f1e')
+            for ax in axes: style_ax(ax)
+
+            for t in range(min(mc_samples,5)):
+                axes[0].plot(mc_preds_id[t,:10,0], alpha=0.4, color='#4fc3f7', lw=1)
+            axes[0].plot(mc_avg_id[:10,0], color='#00e5ff', lw=2.5, label='Mean prediction')
+            axes[0].set_title(f'MC Dropout: {mc_samples} Predictions on ID Samples\n(showing class 0 probability for first 10 samples)',
+                              color='#4fc3f7', fontsize=9, fontweight='bold')
+            axes[0].set_xlabel('Sample', color='#8892b0')
+            axes[0].set_ylabel('P(class 0)', color='#8892b0')
+            axes[0].legend(fontsize=8, facecolor='#0d1b2a', labelcolor='#ccd6f6', edgecolor='#1e3a5f')
+
+            axes[1].hist(ent_mc_id,  bins=30, color='#4fc3f7', alpha=0.75, density=True, label='ID')
+            axes[1].hist(ent_mc_ood, bins=30, color='#ef5350', alpha=0.75, density=True, label='OOD')
+            axes[1].set_title('MC Dropout Entropy: ID vs OOD', color='#4fc3f7', fontsize=10, fontweight='bold')
+            axes[1].set_xlabel('Entropy', color='#8892b0')
+            axes[1].legend(fontsize=9, facecolor='#0d1b2a', labelcolor='#ccd6f6', edgecolor='#1e3a5f')
+
+            axes[2].hist(var_mc_id,  bins=30, color='#4fc3f7', alpha=0.75, density=True, label='ID')
+            axes[2].hist(var_mc_ood, bins=30, color='#ef5350', alpha=0.75, density=True, label='OOD')
+            axes[2].set_title('MC Dropout Variance: ID vs OOD', color='#4fc3f7', fontsize=10, fontweight='bold')
+            axes[2].set_xlabel('Variance', color='#8892b0')
+            axes[2].legend(fontsize=9, facecolor='#0d1b2a', labelcolor='#ccd6f6', edgecolor='#1e3a5f')
+
+            plt.tight_layout(); st.pyplot(fig); plt.close()
+
+    # ─────────────────────────────────────────────────────────
+    # TAB 4 — Ensemble
+    # ─────────────────────────────────────────────────────────
+    with tab4:
+        st.markdown("## 🌲 Deep Ensembles")
+
+        c1,c2 = st.columns([1,1])
+        with c1:
+            st.markdown(f"""
+<div class="card">
+<h3>🌲 The Core Idea</h3>
+<p>Train <b>{ensemble_size} completely independent models</b> from scratch (different random seeds, different data shuffles).
+At test time, average their predictions. Their <b>disagreement = uncertainty</b>.</p>
+<p>Lakshminarayanan et al. (2017) showed this is the gold standard for uncertainty estimation — often outperforming more complex Bayesian methods.</p>
+<p>In the notebook: <code>nets = [train_ResNet() for _ in range(3)]</code>, then average predictions.</p>
+<div class="highlight">💡 Simple but powerful: if 3 independent experts disagree, you should be uncertain too</div>
+</div>
+
+<div class="card">
+<h3>🔑 Why Ensembles Work</h3>
+<p>Each model converges to a <b>different local minimum</b> of the loss surface (neural network loss is non-convex — many minima exist). Each minimum represents a different "hypothesis" about the data.</p>
+<p>For in-distribution data: all hypotheses agree → low uncertainty.</p>
+<p>For OOD data: models have no basis to agree → high disagreement → high uncertainty.</p>
+<div class="highlight">💡 Current ensemble: {ensemble_size} models trained with seeds 0–{ensemble_size-1}</div>
+</div>
+
+<div class="card">
+<h3>✅ Pros & ❌ Cons</h3>
+<ul>
+<li>✅ State-of-the-art uncertainty quality — often best in practice</li>
+<li>✅ Naturally parallelisable (train models in parallel)</li>
+<li>✅ Also improves accuracy (ensemble accuracy > single model)</li>
+<li>✅ No architectural changes needed</li>
+<li>❌ N× training cost — 5 models = 5× compute and storage</li>
+<li>❌ N× inference cost (unless parallelised)</li>
+<li>❌ Not truly Bayesian — just a practical approximation</li>
+</ul>
+</div>
+""", unsafe_allow_html=True)
+
+        with c2:
+            # Show individual model predictions
+            fig,axes=plt.subplots(2,1,figsize=(7,6))
+            fig.patch.set_facecolor('#0a0f1e')
+            for ax in axes: style_ax(ax)
+
+            colors_ens=['#4fc3f7','#ab47bc','#66bb6a','#ffa726','#ef5350']
+            for i,w in enumerate(ens_weights[:5]):
+                pred_i = mlp_forward(Xte[:15], *w, dropout_rate=0.0)
+                axes[0].plot(pred_i[:,0], alpha=0.7, color=colors_ens[i],
+                             lw=1.5, label=f'Model {i+1}')
+            axes[0].plot(ens_avg_id[:15,0], color='#00e5ff', lw=2.5, ls='--', label='Ensemble mean')
+            axes[0].set_title(f'Individual Model Predictions (ID, {ensemble_size} models)\nclass 0 probability',
+                              color='#4fc3f7', fontsize=9, fontweight='bold')
+            axes[0].legend(fontsize=7, facecolor='#0d1b2a', labelcolor='#ccd6f6', edgecolor='#1e3a5f')
+
+            axes[1].hist(ent_ens_id,  bins=30, color='#4fc3f7', alpha=0.75, density=True, label='ID')
+            axes[1].hist(ent_ens_ood, bins=30, color='#ef5350', alpha=0.75, density=True, label='OOD')
+            axes[1].set_title(f'Ensemble Entropy (N={ensemble_size}): ID vs OOD',
+                              color='#4fc3f7', fontsize=10, fontweight='bold')
+            axes[1].set_xlabel('Entropy', color='#8892b0')
+            axes[1].legend(fontsize=9, facecolor='#0d1b2a', labelcolor='#ccd6f6', edgecolor='#1e3a5f')
+
+            plt.tight_layout(); st.pyplot(fig); plt.close()
+
+    # ─────────────────────────────────────────────────────────
+    # TAB 5 — TTA
+    # ─────────────────────────────────────────────────────────
+    with tab5:
+        st.markdown("## 🎭 Test Time Augmentation (TTA)")
+
+        c1,c2 = st.columns([1,1])
+        with c1:
+            st.markdown(f"""
+<div class="card">
+<h3>🎭 The Core Idea</h3>
+<p>Instead of modifying the model, TTA modifies the <b>input</b> T times and measures how consistent the predictions are.</p>
+<p>For each test sample:</p>
+<ol>
+<li>Apply T different random augmentations (crop, flip, zoom, noise...)</li>
+<li>Run each augmented version through the model</li>
+<li>Average predictions → better accuracy. Measure spread → uncertainty.</li>
+</ol>
+<p>In the notebook, augmentations used: <code>random_crop, random_flip, random_contrast, random_zoom</code></p>
+<div class="highlight">💡 TTA is the only method that doesn't require any changes to training — it's purely test-time</div>
+</div>
+
+<div class="card">
+<h3>🤔 Why Does This Estimate Uncertainty?</h3>
+<p>If a sample is easy and clearly in-distribution, minor augmentations won't change the prediction much → <b>low variance = low uncertainty</b>.</p>
+<p>If a sample is ambiguous or OOD, small input changes cause the model to "flip" between predictions → <b>high variance = high uncertainty</b>.</p>
+<p>In this app, TTA uses Gaussian noise as augmentation (controlled by TTA Strength slider).</p>
+<div class="highlight">💡 Current TTA strength: σ={tta_strength:.2f} added to each input feature per draw</div>
+</div>
+
+<div class="card">
+<h3>✅ Pros & ❌ Cons</h3>
+<ul>
+<li>✅ Zero retraining — works with any pre-trained model</li>
+<li>✅ Can be applied retrospectively to already deployed models</li>
+<li>✅ Augmentation choice encodes domain knowledge</li>
+<li>❌ Quality depends heavily on augmentation relevance</li>
+<li>❌ For tabular data, "augmentation" is less natural than for images</li>
+<li>❌ T× inference cost</li>
+<li>❌ Less theoretically motivated than MC Dropout or VI</li>
+</ul>
+</div>
+""", unsafe_allow_html=True)
+
+        with c2:
+            fig,axes=plt.subplots(2,1,figsize=(7,6))
+            fig.patch.set_facecolor('#0a0f1e')
+            for ax in axes: style_ax(ax)
+
+            axes[0].hist(ent_tta_id,  bins=30, color='#4fc3f7', alpha=0.75, density=True, label='ID')
+            axes[0].hist(ent_tta_ood, bins=30, color='#ef5350', alpha=0.75, density=True, label='OOD')
+            axes[0].set_title(f'TTA Entropy (σ={tta_strength}, T={mc_samples})',
+                              color='#4fc3f7', fontsize=10, fontweight='bold')
+            axes[0].set_xlabel('Entropy', color='#8892b0')
+            axes[0].legend(fontsize=9, facecolor='#0d1b2a', labelcolor='#ccd6f6', edgecolor='#1e3a5f')
+
+            axes[1].hist(var_tta_id,  bins=30, color='#4fc3f7', alpha=0.75, density=True, label='ID')
+            axes[1].hist(var_tta_ood, bins=30, color='#ef5350', alpha=0.75, density=True, label='OOD')
+            axes[1].set_title(f'TTA Variance', color='#4fc3f7', fontsize=10, fontweight='bold')
+            axes[1].set_xlabel('Variance', color='#8892b0')
+            axes[1].legend(fontsize=9, facecolor='#0d1b2a', labelcolor='#ccd6f6', edgecolor='#1e3a5f')
+
+            plt.tight_layout(); st.pyplot(fig); plt.close()
+
+    # ─────────────────────────────────────────────────────────
+    # TAB 6 — Full Comparison (like notebook's final plot)
+    # ─────────────────────────────────────────────────────────
+    with tab6:
+        st.markdown("## 📊 Full Method Comparison")
+        st.markdown("""
+<div class="card">
+<h3>🏆 Which Method is Best?</h3>
+<p>This is the key question from the notebook — comparing all 4 methods side by side using all 3 uncertainty metrics.
+A good method should show <b>clear separation</b> between ID (blue) and OOD (red) distributions.</p>
+<ul>
+<li>More <b>separated histograms</b> = better OOD detection</li>
+<li>OOD should be shifted towards <b>higher uncertainty</b> (higher entropy/variance, lower MSR)</li>
+<li>ID should be concentrated at <b>low uncertainty</b></li>
+</ul>
+<div class="highlight">💡 Perfect separation = AUROC of 1.0 — the model perfectly knows what it doesn't know</div>
+</div>""", unsafe_allow_html=True)
+
+        methods = {
+            "Deterministic": (ent_det_id, ent_det_ood, 1-msr_mc_id, 1-msr_mc_ood, var_mc_id, var_mc_ood),
+            f"MC Dropout\n(T={mc_samples})": (ent_mc_id, ent_mc_ood, 1-msr_mc_id, 1-msr_mc_ood, var_mc_id, var_mc_ood),
+            f"Ensemble\n(N={ensemble_size})": (ent_ens_id, ent_ens_ood, 1-msr_ens_id, 1-msr_ens_ood, var_ens_id, var_ens_ood),
+            f"TTA\n(σ={tta_strength})": (ent_tta_id, ent_tta_ood, 1-msr_tta_id, 1-msr_tta_ood, var_tta_id, var_tta_ood),
+        }
+        metrics_labels = ["Entropy", "1 - Max Softmax", "Variance"]
+
+        fig,axes=plt.subplots(3, 4, figsize=(16,11))
+        fig.patch.set_facecolor('#0a0f1e')
+
+        for col,(method_name, vals) in enumerate(methods.items()):
+            for row,mname in enumerate(metrics_labels):
+                ax=axes[row,col]; style_ax(ax)
+                sc_id  = vals[row*2]
+                sc_ood = vals[row*2+1]
+                all_v = np.concatenate([sc_id,sc_ood])
+                bins  = np.linspace(all_v.min(), np.percentile(all_v,99.5), 30)
+                ax.hist(sc_id,  bins=bins, color='#4fc3f7', alpha=0.7,
+                        density=True, label='ID')
+                ax.hist(sc_ood, bins=bins, color='#ef5350', alpha=0.7,
+                        density=True, label='OOD')
+                if row==0:
+                    ax.set_title(method_name, color='#4fc3f7',
+                                 fontsize=9, fontweight='bold')
+                if col==0:
+                    ax.set_ylabel(mname, color='#8892b0', fontsize=8)
+                if row==0 and col==0:
+                    ax.legend(fontsize=7, facecolor='#0d1b2a',
+                              labelcolor='#ccd6f6', edgecolor='#1e3a5f')
+
+        fig.suptitle('All Methods × All Metrics: ID (blue) vs OOD (red)',
+                     color='#4fc3f7', fontsize=12, fontweight='bold')
+        plt.tight_layout(); st.pyplot(fig); plt.close()
+
+        # ── AUROC for each method ─────────────────────────────
+        st.markdown("### 🎯 AUROC — OOD Detection Performance")
+        st.markdown("""<div class="card">
+<p>AUROC (Area Under ROC) measures how well each method separates ID from OOD samples using entropy as the score.
+<b>1.0 = perfect</b>, <b>0.5 = random</b>. Higher is better.</p>
+</div>""", unsafe_allow_html=True)
+
+        from sklearn.metrics import roc_auc_score
+        auroc_data = []
+        for method_name,(eid,eood,_,_,_,_) in methods.items():
+            y_true = np.concatenate([np.zeros(len(eid)), np.ones(len(eood))])
+            y_score= np.concatenate([eid, eood])
+            try:
+                auc_val = roc_auc_score(y_true, y_score)
+            except:
+                auc_val = 0.5
+            auroc_data.append((method_name.replace('\n',' '), auc_val))
+
+        fig,ax=plt.subplots(figsize=(9,3.5)); style_ax(ax,fig)
+        names=[d[0] for d in auroc_data]; vals=[d[1] for d in auroc_data]
+        bar_cols=['#8892b0','#4fc3f7','#00e5ff','#ab47bc']
+        bars=ax.bar(names, vals, color=bar_cols[:len(names)], alpha=0.85,
+                    edgecolor='#0a0f1e', linewidth=0.5)
+        ax.axhline(0.5, color='#ef5350', lw=2, ls='--', label='Random baseline (0.5)')
+        ax.axhline(1.0, color='#00e5ff', lw=1, ls=':', alpha=0.5, label='Perfect (1.0)')
+        for bar,val in zip(bars,vals):
+            ax.text(bar.get_x()+bar.get_width()/2, val+0.01, f'{val:.3f}',
+                    ha='center', va='bottom', color='white',
+                    fontsize=10, fontfamily='monospace', fontweight='bold')
+        ax.set_ylim(0,1.1)
+        ax.set_ylabel('AUROC (Entropy)', color='#8892b0')
+        ax.set_title('OOD Detection AUROC by Method', color='#4fc3f7',
+                     fontsize=12, fontweight='bold')
+        ax.legend(fontsize=9, facecolor='#0d1b2a', labelcolor='#ccd6f6', edgecolor='#1e3a5f')
+        plt.tight_layout(); st.pyplot(fig); plt.close()
+
+        st.markdown("""
+<div class="card">
+<h3>📖 Key Takeaways from the Notebook</h3>
+<ul>
+<li><b>Deterministic</b>: often overconfident on OOD — the baseline to beat</li>
+<li><b>MC Dropout</b>: better than deterministic, cheap to run, but depends on dropout placement and rate</li>
+<li><b>Ensemble</b>: typically the strongest — independent training diversity captures epistemic uncertainty best</li>
+<li><b>TTA</b>: surprisingly competitive for image data; less natural for tabular data</li>
+</ul>
+<p>In the notebook's experiments on MNIST vs EMNIST, all Bayesian methods significantly outperform the deterministic baseline on entropy-based OOD detection.</p>
+<div class="highlight">💡 In practice: use Ensembles if you can afford it. Use MC Dropout as a cheap alternative. Always evaluate on OOD data!</div>
+</div>""", unsafe_allow_html=True)
+
+
 # ── Footer ───────────────────────────────────────────────────
 st.markdown("---")
 st.markdown("""
 <div style="text-align:center;color:#8892b0;font-family:'JetBrains Mono',monospace;font-size:0.75rem;padding:0.4rem 0;">
-    ML Explorer &nbsp;·&nbsp; SVM · Regression · Decision Tree · K-Means · KNN · MLP · AutoEncoder · VAE · Contrastive &nbsp;·&nbsp; 🤖
+    ML Explorer &nbsp;·&nbsp; SVM · Regression · Decision Tree · K-Means · KNN · MLP · AutoEncoder · VAE · Contrastive · Uncertainty &nbsp;·&nbsp; 🤖
 </div>
 """, unsafe_allow_html=True)
